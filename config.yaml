@@ -1,0 +1,37 @@
+camera:
+  # File path, RTSP/HTTP URL, or camera index (0). File sources loop by default.
+  source: data/sample.mp4
+  width: 1280
+  height: 720
+  loop_file: true
+
+pipeline:
+  detect_fps: 5
+  live_fps: 10
+  jpeg_quality: 80
+
+motion:
+  min_area: 1500
+  threshold: 25
+  blur_ksize: 21
+
+detection:
+  model: yolov8n.pt
+  conf: 0.4
+  classes:
+    - person
+    - car
+    - dog
+    - cat
+  device: cpu
+
+events:
+  pre_seconds: 2
+  post_seconds: 4
+  cooldown_seconds: 8
+  retention_days: 7
+  clip_fps: 10
+
+server:
+  host: 0.0.0.0
+  port: 8000

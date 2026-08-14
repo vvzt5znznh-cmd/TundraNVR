@@ -1,0 +1,21 @@
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Models and runtime data
+*.pt
+*.onnx
+data/events.db
+data/sample.mp4
+data/clips/*
+!data/clips/.gitkeep
+data/thumbs/*
+!data/thumbs/.gitkeep
+
+# OS / editor
+.DS_Store
+*.swp
