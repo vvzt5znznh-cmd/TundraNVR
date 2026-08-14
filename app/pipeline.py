@@ -186,6 +186,10 @@ class Pipeline:
         frames = 0
         consecutive_fail = 0
         loop_fails = 0
+        native_fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+        pace_file = self._is_file_source() and native_fps > 1
+        frame_interval = 1.0 / native_fps if pace_file else 0.0
+        next_frame_at = time.monotonic()
 
         while not self._stop.is_set():
             ok, frame = cap.read()
@@ -193,12 +197,15 @@ class Pipeline:
                 consecutive_fail += 1
                 if self._is_file_source() and self.cfg.camera.loop_file:
                     loop_fails += 1
-                    log.info("End of file; looping source")
+                    log.debug("End of file; looping source")
                     if loop_fails > 3 or not cap.set(cv2.CAP_PROP_POS_FRAMES, 0):
                         return
                     self.motion.reset()
                     consecutive_fail = 0
                     continue
+                if self._is_file_source():
+                    log.warning("File source ended")
+                    return
                 if consecutive_fail >= 8:
                     log.warning("Capture read failed %s times", consecutive_fail)
                     return
@@ -231,6 +238,15 @@ class Pipeline:
             if now - last_detect >= detect_interval:
                 last_detect = now
                 self._process_detect(frame, now)
+
+            if frame_interval:
+                next_frame_at += frame_interval
+                delay = next_frame_at - time.monotonic()
+                if delay > 0:
+                    if self._stop.wait(delay):
+                        break
+                else:
+                    next_frame_at = time.monotonic()
 
     def _is_file_source(self) -> bool:
         source = self.cfg.resolved_source()
