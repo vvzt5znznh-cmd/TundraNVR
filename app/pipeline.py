@@ -419,6 +419,8 @@ class Pipeline:
             self._hub_banner = ("Hub · " + hub_detail) if hub_needed else ""
             with self._lock:
                 self.status.yolo_ran = yolo_ran
+                self.status.last_motion = has_motion
+                self.status.motion_area = area
                 self.status.last_detections = payload
                 self.status.last_scene = scene
                 self.status.last_anomaly = anomaly_reason if page_operator else ""
@@ -441,6 +443,8 @@ class Pipeline:
             self._yolo_ran = False
             with self._lock:
                 self.status.yolo_ran = False
+                self.status.last_motion = has_motion
+                self.status.motion_area = area
                 self.status.last_detections = []
                 self.status.last_anomaly = ""
                 self.status.last_scene = pol.reason if has_motion else "Quiet."
