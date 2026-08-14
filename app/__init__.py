@@ -1,1 +1,1 @@
-"""TundraNVR — local camera detection MVP."""
+"""TundraNVR."""

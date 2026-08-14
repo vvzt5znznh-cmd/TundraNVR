@@ -11,57 +11,10 @@ ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = ROOT / "config.yaml"
 SETTINGS_PATH = ROOT / "data" / "settings.json"
 
-SUGGESTED_MODELS = [
-    "yolov8n.pt",
-    "yolov8s.pt",
-    "yolov8m.pt",
-    "yolo11n.pt",
-]
-
-DETECTOR_MODELS = [
-    {
-        "id": "yolov8n.pt",
-        "name": "Fast",
-        "family": "YOLOv8 Nano",
-        "blurb": "People, cars, and bags at a doorway. Built for a laptop CPU and a live view.",
-        "choose_when": "Default. One building camera, you want it snappy.",
-        "recommended": True,
-    },
-    {
-        "id": "yolov8s.pt",
-        "name": "Balanced",
-        "family": "YOLOv8 Small",
-        "blurb": "Better at smaller or farther objects — a person down the corridor, a bag on the floor.",
-        "choose_when": "Fast is missing things and the machine is not struggling.",
-        "recommended": False,
-    },
-    {
-        "id": "yolov8m.pt",
-        "name": "Accurate",
-        "family": "YOLOv8 Medium",
-        "blurb": "Fewer misses on busy or overlapping frames. Boxes are a bit cleaner.",
-        "choose_when": "Catching matters more than a smooth live view. Slow on CPU.",
-        "recommended": False,
-    },
-    {
-        "id": "yolo11n.pt",
-        "name": "Newer fast",
-        "family": "YOLO11 Nano",
-        "blurb": "Same job as Fast, newer weights. Often a little sharper for the same speed class.",
-        "choose_when": "You already like Fast and want the newer nano.",
-        "recommended": False,
-    },
-]
-
 SAMPLE_LABELS = {
-    "entrance.mp4": "Building entrance — people at the door",
-    "corridor.mp4": "Indoor corridor — people walking",
-    "lobby.mp4": "Indoor lobby — people meeting",
-    "indoor.mp4": "Indoor hall — pedestrians",
-    "aisle.mp4": "Indoor aisle — retail CCTV",
-    "parking.mp4": "Building parking — people, bicycles, cars",
-    "package.mp4": "Indoor — bag left behind",
-    "drone.mp4": "Quadcopter in view",
+    "entrance.mp4": "Entrance",
+    "drone.mp4": "Drone",
+    "package.mp4": "Bag left",
 }
 
 BUILDING_CLASSES = [
@@ -178,30 +131,6 @@ class VisionConfig:
     ollama_model: str = "moondream"
     openai_model: str = "gpt-4o-mini"
     timeout_seconds: float = 25.0
-
-
-PUBLIC_WEBCAMS = [
-    {
-        "path": "https://webcams.nyctmc.org/api/cameras/8a6bc417-4877-4ebe-8052-88c1b261baf1/image",
-        "label": "NYC Central Park West",
-    },
-    {
-        "path": "https://webcams.nyctmc.org/api/cameras/ecba28cb-ac70-4d25-abcb-6506111ea120/image",
-        "label": "NYC FDR at Brooklyn Bridge",
-    },
-    {
-        "path": "https://webcams.nyctmc.org/api/cameras/332f161d-47cb-4c8a-b6b6-5ad48a55c978/image",
-        "label": "NYC Central Park South",
-    },
-    {
-        "path": "https://webcams.nyctmc.org/api/cameras/7d06c900-a5e5-49ca-96b9-93a0662a2069/image",
-        "label": "NYC Verrazano Bridge",
-    },
-    {
-        "path": "https://webcams.nyctmc.org/api/cameras/0f3b6031-fe36-43df-b2c7-6120e0580309/image",
-        "label": "NYC Brooklyn Bridge walkway",
-    },
-]
 
 
 @dataclass
@@ -353,22 +282,17 @@ def save_runtime_settings(*, source: str | int, model: str) -> None:
     SETTINGS_PATH.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
-def parse_settings_update(source: str, model: str) -> tuple[str | int, str]:
+def parse_settings_update(source: str) -> str | int:
     source_text = (source or "").strip()
-    model_text = (model or "").strip()
     if not source_text:
         raise SettingsError("source is required")
-    if not model_text:
-        raise SettingsError("model is required")
-    if any(ch in model_text for ch in "\n\r"):
-        raise SettingsError("invalid model")
     parsed = _as_source(source_text)
     if isinstance(parsed, str) and "://" not in parsed:
         path = Path(parsed)
         resolved = path if path.is_absolute() else ROOT / path
         if not resolved.exists():
             raise SettingsError(f"source file not found: {resolved}")
-    return parsed, model_text
+    return parsed
 
 
 def listed_samples() -> list[dict[str, str]]:
@@ -377,82 +301,12 @@ def listed_samples() -> list[dict[str, str]]:
     for name, label in SAMPLE_LABELS.items():
         path = folder / name
         if path.is_file() and path.stat().st_size > 10_000:
-            title, _, detail = label.partition(" — ")
-            items.append(
-                {
-                    "path": f"data/samples/{name}",
-                    "label": label,
-                    "title": title,
-                    "detail": detail,
-                }
-            )
+            items.append({"path": f"data/samples/{name}", "label": label})
     return items
 
 
 def public_settings(cfg: AppConfig) -> dict[str, Any]:
-    vision_provider = cfg.vision.provider if cfg.vision.enabled else "off"
-    if vision_provider == "auto":
-        vision_blurb = (
-            "Writes the log line. Tries a local caption model, then OpenAI if a key is set, "
-            "otherwise a sentence from the detector labels."
-        )
-    elif vision_provider == "ollama":
-        vision_blurb = "Local caption model (Ollama) describes the still after each event."
-    elif vision_provider == "openai":
-        vision_blurb = "OpenAI vision describes the still after each event."
-    else:
-        vision_blurb = "Scene notes use the detector labels only — no extra caption model."
     return {
         "source": str(cfg.camera.source),
-        "model": cfg.detection.model,
-        "suggested_models": SUGGESTED_MODELS,
-        "detectors": DETECTOR_MODELS,
-        "suggested_sources": listed_samples(),
-        "suggested_webcams": PUBLIC_WEBCAMS,
-        "vision": {
-            "enabled": cfg.vision.enabled,
-            "provider": vision_provider,
-        },
-        "stack": [
-            {
-                "name": "Drone finder",
-                "status": "always on",
-                "seat": "node",
-                "blurb": (
-                    "Always on next to the detector. Stock YOLO has no drone class; "
-                    "this extra model looks for quadcopters and winged UAVs. "
-                    "A drone prior can skip a quiet Edge and still reach Node."
-                ),
-            },
-            {
-                "name": "Scene notes",
-                "status": vision_provider,
-                "seat": "hub",
-                "blurb": vision_blurb,
-            },
-        ],
-        "monitoring": {
-            "expected_classes": cfg.monitoring.expected_classes,
-            "alert_classes": cfg.monitoring.alert_classes,
-        },
-        "escalation": [
-            {
-                "id": "edge",
-                "name": "Raspberry",
-                "question": "Anomaly or not?",
-                "blurb": "Motion plus this camera’s Pattern of Life. Usual frames stay on the Pi.",
-            },
-            {
-                "id": "node",
-                "name": "Node",
-                "question": "What is it?",
-                "blurb": "Names people and things on Edge trips. Drones skip a quiet Edge.",
-            },
-            {
-                "id": "hub",
-                "name": "Hub",
-                "question": "What is it doing?",
-                "blurb": "Captions activity only when Node cannot close the packet.",
-            },
-        ],
+        "samples": listed_samples(),
     }

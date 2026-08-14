@@ -33,7 +33,6 @@ _settings_lock = threading.Lock()
 
 class SettingsUpdate(BaseModel):
     source: str = Field(min_length=1, max_length=2000)
-    model: str = Field(min_length=1, max_length=500)
 
 
 class EventReview(BaseModel):
@@ -60,7 +59,6 @@ app.mount("/media", StaticFiles(directory=str(cfg.data_dir)), name="media")
 def health() -> dict:
     payload = pipeline.health()
     payload.update(version_payload())
-    payload["vision"] = cfg.vision.provider if cfg.vision.enabled else "off"
     return payload
 
 
@@ -136,12 +134,12 @@ def get_settings() -> dict:
 def update_settings(body: SettingsUpdate) -> dict:
     global cfg, pipeline
     try:
-        source, model = parse_settings_update(body.source, body.model)
+        source = parse_settings_update(body.source)
     except SettingsError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     with _settings_lock:
-        save_runtime_settings(source=source, model=model)
-        log.info("Applying settings source=%s model=%s", source, model)
+        save_runtime_settings(source=source, model=cfg.detection.model)
+        log.info("Applying source=%s", source)
         old = pipeline
         old.stop()
         cfg = load_config()

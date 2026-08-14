@@ -1,5 +1,4 @@
 camera:
-  # File path, RTSP/HTTP URL, or camera index (0). File sources loop by default.
   source: data/samples/entrance.mp4
   width: 1280
   height: 720
@@ -18,7 +17,6 @@ motion:
 detection:
   model: yolov8n.pt
   conf: 0.4
-  # Second model (YOLOv8n) trained to spot quadcopters and fixed-wing UAVs.
   drone_model: drone-yolo.pt
   drone_conf: 0.55
   classes:
@@ -53,7 +51,6 @@ server:
 
 vision:
   enabled: true
-  # auto tries Ollama, then OPENAI_API_KEY, then a YOLO-based note.
   provider: auto
   ollama_url: http://127.0.0.1:11434
   ollama_model: moondream
@@ -61,7 +58,6 @@ vision:
   timeout_seconds: 25
 
 monitoring:
-  # Ordinary for a building camera. Anything else is flagged.
   expected_classes:
     - person
     - bicycle

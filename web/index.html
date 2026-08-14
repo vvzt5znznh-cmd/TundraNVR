@@ -3,164 +3,71 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Tundra — Monitor</title>
+  <title>Tundra</title>
   <link rel="stylesheet" href="/app.css" />
 </head>
 <body data-seat="edge">
   <header class="top">
-    <div class="brand">
-      <strong>Tundra</strong>
-      <span class="tag">Building camera</span>
-      <span id="version"></span>
-    </div>
-    <div class="seats" id="seats" role="tablist" aria-label="Pipeline seat">
+    <strong class="brand">Tundra</strong>
+    <div class="seats" id="seats">
       <button type="button" data-seat="edge" class="on">Raspberry</button>
       <button type="button" data-seat="node">Node</button>
       <button type="button" data-seat="hub">Hub</button>
     </div>
     <nav>
-      <a class="active" href="/">Monitor</a>
+      <a class="active" href="/">Live</a>
       <a href="/events">Activity</a>
     </nav>
   </header>
   <main class="wrap">
-    <ol class="handoff" id="handoff" aria-label="Escalation"></ol>
-
+    <ol class="handoff" id="handoff"></ol>
     <section class="stage">
       <img id="stream" alt="Live camera" src="/api/stream.mjpg?seat=edge" />
       <div class="hud">
-        <span class="pill wait" id="status"><span class="dot">●</span> Connecting</span>
-        <span class="pill" id="cameraName">Camera</span>
+        <span class="pill wait" id="status">Connecting</span>
         <span class="pill" id="seatPill">Raspberry</span>
-        <span class="pill alert" id="alertPill" hidden></span>
       </div>
     </section>
-
     <section class="scene-card" id="sceneCard">
-      <p class="kicker" id="sceneKicker">Anomaly or not?</p>
-      <h2 id="scene">Waiting for the camera…</h2>
-      <p class="lede" id="sceneSub">This seat is the Pi: usual frames never leave.</p>
+      <p class="kicker" id="sceneKicker">Unusual?</p>
+      <h2 id="scene">Waiting…</h2>
+      <p class="lede" id="sceneSub"></p>
       <div class="objects" id="objects"></div>
     </section>
-
-    <section class="grid-2">
-      <div class="panel">
-        <p class="kicker">Camera</p>
-        <h2>Where to look</h2>
-        <p class="lede">Static building views. Click one to switch — the live picture pauses while it restarts. Pattern of Life is remembered per camera.</p>
-        <div class="chips" id="sourceChips" style="margin-top:14px"></div>
-        <details class="advanced">
-          <summary>File, URL, or other cameras</summary>
-          <form class="fields" id="sourceForm">
-            <input id="sourceInput" name="source" list="sourceOptions" autocomplete="off" spellcheck="false"
-              placeholder="data/samples/entrance.mp4" />
-            <button class="btn" type="submit" id="applySource">Use this</button>
-          </form>
-          <p class="lede" style="margin-top:12px">Street stills (NYC DOT), not a building camera.</p>
-          <div class="chips" id="webcamChips" style="margin-top:8px"></div>
-          <datalist id="sourceOptions"></datalist>
-        </details>
-        <div class="msg" id="settingsMsg"></div>
-      </div>
-
-      <div class="panel edge-only" id="edgePanel">
-        <p class="kicker">Edge</p>
-        <h2>Pattern of Life</h2>
-        <p class="lede">This camera learns where motion usually is. During learning, Edge is jumpy and uploads. Once confident, usual doorway traffic stays on the Raspberry.</p>
-        <p class="pol-stat" id="polStat">Learning…</p>
-      </div>
-
-      <div class="panel node-only" id="nodePanel">
-        <p class="kicker">How it sees</p>
-        <h2>Detector</h2>
-        <p class="lede">This model names people and things on packets Edge would upload. Bigger is slower and usually catches more. Drones are a separate always-on prior.</p>
-        <div class="cards" id="modelCards" style="margin-top:14px"></div>
-        <div class="extras" id="nodeStack"></div>
-      </div>
-
-      <div class="panel hub-only" id="hubPanel">
-        <p class="kicker">Hub</p>
-        <h2>What it is doing</h2>
-        <p class="lede">A caption runs only when Node cannot close the packet — a drone prior, an unattended bag, or a scene that still looks unlike this camera.</p>
-        <div class="extras" id="hubStack"></div>
-      </div>
-    </section>
+    <div class="chips" id="sourceChips"></div>
+    <p class="msg" id="settingsMsg"></p>
   </main>
   <script>
-    const sourceInput = document.getElementById("sourceInput");
-    const sourceOptions = document.getElementById("sourceOptions");
-    const sourceChips = document.getElementById("sourceChips");
-    const webcamChips = document.getElementById("webcamChips");
-    const applySource = document.getElementById("applySource");
-    const settingsMsg = document.getElementById("settingsMsg");
-    const modelCards = document.getElementById("modelCards");
-    let currentSource = "";
-    let currentModel = "yolov8n.pt";
-    let samples = [];
-    let seat = "edge";
     const seatNames = { edge: "Raspberry", node: "Node", hub: "Hub" };
-
-    function setMsg(text, kind) {
-      settingsMsg.textContent = text;
-      settingsMsg.className = "msg" + (kind ? " " + kind : "");
-    }
-
-    function friendlyCamera(source) {
-      const s = String(source || "");
-      const hit = samples.find((x) => s === x.path || s.endsWith(x.path) || s.endsWith("/" + x.path.split("/").pop()));
-      if (hit) return hit.title || hit.label;
-      const cam = [...webcamChips.querySelectorAll("button")]
-        .find((b) => s === b.getAttribute("data-path"));
-      if (cam) return cam.textContent;
-      if (!s) return "Camera";
-      const parts = s.split(/[/\\]/);
-      return parts[parts.length - 1] || "Camera";
-    }
-
-    function markSelected() {
-      sourceChips.querySelectorAll("button").forEach((btn) => {
-        btn.classList.toggle("selected", btn.getAttribute("data-path") === currentSource);
-      });
-      webcamChips.querySelectorAll("button").forEach((btn) => {
-        btn.classList.toggle("selected", btn.getAttribute("data-path") === currentSource);
-      });
-      modelCards.querySelectorAll(".card").forEach((btn) => {
-        btn.classList.toggle("selected", btn.getAttribute("data-id") === currentModel);
-      });
-      document.getElementById("cameraName").textContent = friendlyCamera(currentSource);
-    }
+    const questions = { edge: "Unusual?", node: "What is it?", hub: "What is it doing?" };
+    let seat = "edge";
+    let currentSource = "";
 
     function setSeat(next) {
-      if (next === "operator") {
-        window.location.href = "/events";
-        return;
-      }
+      if (next === "operator") { location.href = "/events"; return; }
       if (next === "raspberry") next = "edge";
       if (!["edge", "node", "hub"].includes(next)) return;
       seat = next;
       document.body.dataset.seat = seat;
-      document.getElementById("seats").querySelectorAll("button").forEach((btn) => {
+      document.querySelectorAll("#seats button").forEach((btn) => {
         btn.classList.toggle("on", btn.getAttribute("data-seat") === seat);
       });
       document.getElementById("seatPill").textContent = seatNames[seat];
       document.getElementById("stream").src = "/api/stream.mjpg?seat=" + seat + "&t=" + Date.now();
-      refreshHealth();
+      refresh();
     }
 
     function renderHandoff(handoff) {
       const el = document.getElementById("handoff");
       const steps = (handoff && handoff.steps) || [];
       if (!steps.length) {
-        el.innerHTML = `<li class="idle">Waiting for a tick… Raspberry → Node → Hub → Operator</li>`;
+        el.innerHTML = "<li class=\"idle\">Raspberry → Node → Hub → Operator</li>";
         return;
       }
       el.innerHTML = steps.map((s) => {
         const stop = s.stage === (handoff.stopped_at || "");
-        const cls = ["step", s.decision, stop ? "stop" : ""].join(" ").trim();
-        return `<li><button type="button" class="${cls}" data-stage="${s.stage}">
-          <b>${s.label}</b>
-          <span>${s.decision}</span>
-          <em>${s.detail || ""}</em>
+        return `<li><button type="button" class="step ${s.decision} ${stop ? "stop" : ""}" data-stage="${s.stage}">
+          <b>${s.label}</b><span>${s.decision}</span><em>${s.detail || ""}</em>
         </button></li>`;
       }).join("");
       el.querySelectorAll("button").forEach((btn) => {
@@ -168,190 +75,112 @@
       });
     }
 
-    async function applySettings(source, model, note) {
-      applySource.disabled = true;
-      setMsg(note || "Switching camera… live view pauses for a moment.");
+    async function applySource(source) {
+      const msg = document.getElementById("settingsMsg");
+      msg.textContent = "Switching…";
       try {
         const res = await fetch("/api/settings", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ source, model }),
+          body: JSON.stringify({ source }),
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || "could not apply settings");
+        if (!res.ok) throw new Error(data.detail || "failed");
         currentSource = data.source || source;
-        currentModel = data.model || model;
-        sourceInput.value = currentSource;
+        markChips();
         document.getElementById("stream").src = "/api/stream.mjpg?seat=" + seat + "&t=" + Date.now();
-        markSelected();
-        setMsg("Updated. This camera has its own Pattern of Life profile.", "ok");
-        refreshHealth();
+        msg.textContent = "";
+        refresh();
       } catch (err) {
-        setMsg(err.message || "could not apply settings", "err");
-      } finally {
-        applySource.disabled = false;
+        msg.textContent = err.message || "failed";
+        msg.className = "msg err";
       }
     }
 
-    async function refreshHealth() {
+    function markChips() {
+      document.querySelectorAll("#sourceChips button").forEach((btn) => {
+        btn.classList.toggle("selected", btn.getAttribute("data-path") === currentSource);
+      });
+    }
+
+    async function refresh() {
       try {
-        const res = await fetch("/health");
-        const data = await res.json();
+        const data = await (await fetch("/health")).json();
         const status = document.getElementById("status");
-        if (data.opened) {
-          status.className = "pill live";
-          status.innerHTML = '<span class="dot">●</span> Live';
-        } else {
-          status.className = "pill wait";
-          status.innerHTML = '<span class="dot">●</span> Waiting';
-        }
-        document.getElementById("cameraName").textContent = friendlyCamera(currentSource || data.source);
-        const scene = document.getElementById("scene");
-        const sub = document.getElementById("sceneSub");
-        const kicker = document.getElementById("sceneKicker");
-        const card = document.getElementById("sceneCard");
-        const alertPill = document.getElementById("alertPill");
-        const objs = document.getElementById("objects");
+        status.className = "pill " + (data.opened ? "live" : "wait");
+        status.textContent = data.opened ? "Live" : "Waiting";
         const handoff = data.handoff || {};
         const edge = handoff.edge || {};
         const node = handoff.node || {};
         const hub = handoff.hub || {};
         const pol = data.pol || {};
         renderHandoff(handoff);
-
-        const polEl = document.getElementById("polStat");
-        if (polEl) {
-          const n = pol.samples || 0;
-          polEl.textContent = pol.confident
-            ? `Confident after ${n} ticks. Unusual score ${edge.score ?? "—"} · ${edge.reason || "looks like this camera"}`
-            : `Learning (${n}/80 ticks). Edge uploads while it learns this view.`;
-        }
-
-        card.classList.remove("alert");
-        alertPill.hidden = true;
+        document.getElementById("sceneKicker").textContent = questions[seat];
+        const scene = document.getElementById("scene");
+        const sub = document.getElementById("sceneSub");
+        const objs = document.getElementById("objects");
+        const card = document.getElementById("sceneCard");
+        card.classList.toggle("alert", Boolean(hub.page_operator && seat === "hub"));
         if (seat === "edge") {
-          kicker.textContent = "Anomaly or not?";
           if (!data.last_motion) {
-            scene.textContent = "Quiet — would not leave the Pi.";
-            sub.textContent = "No motion. Raspberry keeps the frame locally.";
+            scene.textContent = "Quiet";
+            sub.textContent = "Stays on the Pi.";
           } else if (edge.upload) {
-            scene.textContent = "Unusual — would upload to Node.";
-            sub.textContent = edge.reason || "This does not match the camera’s usual pattern.";
+            scene.textContent = "Unusual";
+            sub.textContent = edge.reason || "Upload to Node.";
           } else if (edge.prior_skip) {
-            scene.textContent = "Usual scene, but a policy skip sent this to Node.";
-            sub.textContent = "Edge would have kept this; Node still received it because of a hard prior (drone, aircraft, unattended bag).";
+            scene.textContent = "Usual, policy skip";
+            sub.textContent = "Would stay local; Node still got it (drone / bag).";
           } else {
-            scene.textContent = "Usual — would not leave the Pi.";
-            sub.textContent = edge.reason || "Motion is where this camera expects it.";
+            scene.textContent = "Usual";
+            sub.textContent = pol.confident ? "Stays on the Pi." : "Learning this camera.";
           }
           objs.innerHTML = "";
         } else if (seat === "node") {
-          kicker.textContent = "What is it?";
-          const dets = node.received ? (node.classes || data.last_detections || []) : [];
+          const dets = node.received ? (node.classes || []) : [];
           if (!node.received) {
-            scene.textContent = "Inbox empty.";
-            sub.textContent = "Edge kept this locally. Node only sees trips.";
+            scene.textContent = "Nothing from Edge";
+            sub.textContent = "Usual frames never arrive.";
           } else if (node.closed) {
-            scene.textContent = (dets.map((d) => d.cls).join(", ") || "Named") + " — closed.";
-            sub.textContent = "Expected class in an expected place. Hub is not asked.";
+            scene.textContent = dets.map((d) => d.cls).join(", ") || "Named";
+            sub.textContent = "Closed. Hub is not asked.";
           } else {
-            scene.textContent = (dets.map((d) => d.cls).join(", ") || "Unsure") + " — send to Hub.";
-            sub.textContent = hub.detail || data.last_scene || "Node could not close this packet.";
+            scene.textContent = dets.map((d) => d.cls).join(", ") || "Unsure";
+            sub.textContent = "Send to Hub.";
           }
-          objs.innerHTML = dets.length ? dets.map((d) => `<span>${d.cls}</span>`).join("") : "";
+          objs.innerHTML = dets.map((d) => `<span>${d.cls}</span>`).join("");
+        } else if (!hub.ran) {
+          scene.textContent = "Idle";
+          sub.textContent = "Node did not escalate.";
+          objs.innerHTML = "";
         } else {
-          kicker.textContent = "What is it doing?";
-          if (!hub.ran) {
-            scene.textContent = "Idle.";
-            sub.textContent = "Node did not escalate. Hub never sees usual video.";
-            objs.innerHTML = "";
-          } else {
-            scene.textContent = data.last_scene || hub.detail || "Describing activity…";
-            sub.textContent = hub.page_operator
-              ? "Paging the operator — confirm or dismiss on Activity."
-              : "Logged without paging. Operator can still review on Activity.";
-            if (hub.page_operator) {
-              card.classList.add("alert");
-              alertPill.hidden = false;
-              alertPill.textContent = data.last_anomaly || "operator";
-            }
-            const dets = node.classes || data.last_detections || [];
-            objs.innerHTML = dets.length ? dets.map((d) => `<span>${d.cls}</span>`).join("") : "";
-          }
+          scene.textContent = data.last_scene || hub.detail || "Describing…";
+          sub.textContent = hub.page_operator ? "Needs an operator." : "Logged.";
+          objs.innerHTML = (node.classes || []).map((d) => `<span>${d.cls}</span>`).join("");
         }
-        if (data.display) document.getElementById("version").textContent = data.display;
       } catch (err) {
-        document.getElementById("status").textContent = "Health error";
+        document.getElementById("status").textContent = "Error";
       }
     }
 
-    function renderModels(detectors) {
-      modelCards.innerHTML = (detectors || []).map((m) => `
-        <button type="button" class="card" data-id="${m.id}">
-          <div class="row">
-            <b>${m.name} · ${m.family}</b>
-            ${m.recommended ? '<span class="rec">Recommended</span>' : `<span class="why">${m.id}</span>`}
-          </div>
-          <p>${m.blurb}</p>
-          <p>${m.choose_when}</p>
-        </button>
-      `).join("");
-      modelCards.querySelectorAll(".card").forEach((btn) => {
-        btn.addEventListener("click", () => {
-          applySettings(sourceInput.value || currentSource, btn.getAttribute("data-id"), "Loading detector… first use may download weights.");
-        });
-      });
-    }
-
-    async function loadSettings() {
-      const res = await fetch("/api/settings");
-      if (!res.ok) throw new Error("settings failed");
-      const data = await res.json();
+    async function load() {
+      const data = await (await fetch("/api/settings")).json();
       currentSource = data.source || "";
-      currentModel = data.model || "yolov8n.pt";
-      sourceInput.value = currentSource;
-      samples = data.suggested_sources || [];
-      sourceOptions.innerHTML = samples.map((s) => `<option value="${s.path}"></option>`).join("");
-      sourceChips.innerHTML = samples.map((s) =>
-        `<button type="button" data-path="${s.path}">${s.title || s.label}</button>`
-      ).join("");
-      sourceChips.querySelectorAll("button").forEach((btn) => {
-        btn.addEventListener("click", () => {
-          applySettings(btn.getAttribute("data-path"), currentModel);
-        });
-      });
-      const cams = data.suggested_webcams || [];
-      sourceOptions.innerHTML += cams.map((s) => `<option value="${s.path}"></option>`).join("");
-      webcamChips.innerHTML = cams.map((s) =>
+      document.getElementById("sourceChips").innerHTML = (data.samples || []).map((s) =>
         `<button type="button" data-path="${s.path}">${s.label}</button>`
       ).join("");
-      webcamChips.querySelectorAll("button").forEach((btn) => {
-        btn.addEventListener("click", () => {
-          applySettings(btn.getAttribute("data-path"), currentModel);
-        });
+      document.querySelectorAll("#sourceChips button").forEach((btn) => {
+        btn.addEventListener("click", () => applySource(btn.getAttribute("data-path")));
       });
-      renderModels(data.detectors || []);
-      const extras = data.stack || [];
-      document.getElementById("nodeStack").innerHTML = extras.filter((s) => s.seat !== "hub").map((s) =>
-        `<div class="extra"><b>${s.name} · ${s.status}</b><p>${s.blurb}</p></div>`
-      ).join("");
-      document.getElementById("hubStack").innerHTML = extras.filter((s) => s.seat === "hub").map((s) =>
-        `<div class="extra"><b>${s.name} · ${s.status}</b><p>${s.blurb}</p></div>`
-      ).join("");
-      markSelected();
+      markChips();
     }
 
-    document.getElementById("seats").querySelectorAll("button").forEach((btn) => {
+    document.querySelectorAll("#seats button").forEach((btn) => {
       btn.addEventListener("click", () => setSeat(btn.getAttribute("data-seat")));
     });
-    document.getElementById("sourceForm").addEventListener("submit", (ev) => {
-      ev.preventDefault();
-      applySettings(sourceInput.value, currentModel);
-    });
-
-    refreshHealth();
-    setInterval(refreshHealth, 1500);
-    loadSettings().catch(() => setMsg("Could not load settings.", "err"));
+    refresh();
+    setInterval(refresh, 1500);
+    load().catch(() => { document.getElementById("settingsMsg").textContent = "Could not load."; });
   </script>
 </body>
 </html>

@@ -13,11 +13,9 @@ from app.config import VisionConfig
 log = logging.getLogger(__name__)
 
 PROMPT = (
-    "You are looking at a still from a fixed CCTV camera on a building "
-    "(entrance, lobby, corridor, parking, or courtyard). Detected objects: {objects}. "
-    "Anomaly flag: {anomaly}. In 2-3 short sentences log what is in the frame "
-    "and what it is doing, then say whether that is ordinary for this kind of camera "
-    "or worth an alert (drone, unattended bag, unexpected animal or vehicle). "
+    "You are looking at a still from a fixed building CCTV camera. "
+    "Detected objects: {objects}. Anomaly flag: {anomaly}. "
+    "In 2-3 short sentences say what is in the frame and what it is doing. "
     "Do not mention models or that this is a test."
 )
 
