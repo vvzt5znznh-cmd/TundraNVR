@@ -42,11 +42,11 @@ def decide_hub(
     unsure = not named
     if mode == "recall":
         if unsure:
-            return EscalationDecision(True, "Node could not name this", mode)
-        return EscalationDecision(True, "recall-oriented proposal", mode)
+            return EscalationDecision(True, "Detect could not name this", mode)
+        return EscalationDecision(True, "Detect named this — asking Verify", mode)
     still_high = bool(named and pol_confident and pol_score >= pol_min)
     if unsure:
-        return EscalationDecision(True, "Node could not name this", mode)
+        return EscalationDecision(True, "Detect could not name this", mode)
     if still_high:
         reason = "still unusual after naming"
         if no_badge:

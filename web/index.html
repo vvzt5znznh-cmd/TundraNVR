@@ -14,9 +14,16 @@
       <section class="stage">
         <img id="stream" alt="Live camera" src="/api/stream.mjpg?seat=edge" />
         <p class="nosignal" id="nosignal" hidden>No camera on this host.</p>
+        <div class="learn-hud" id="learnHud">
+          <div class="learn-hud-top">
+            <span id="learnLabel">Learning this camera</span>
+            <span id="learnPct">0%</span>
+          </div>
+          <div class="bar thick"><span id="polBarHud"></span></div>
+        </div>
         <div class="hud">
           <span class="pill wait" id="status">Connecting</span>
-          <span class="pill" id="seatPill">Raspberry</span>
+          <span class="pill" id="seatPill">Edge</span>
           <span class="pill wait" id="polPill">Learning…</span>
         </div>
       </section>
@@ -24,14 +31,22 @@
         <p class="kicker" id="sceneKicker">Unusual for this camera?</p>
         <h2 id="scene">Waiting…</h2>
         <p class="lede" id="sceneSub"></p>
+        <p class="why" id="whyDetail"></p>
+        <div class="learn-block" id="learnBlock">
+          <p class="kicker" id="learnKicker">This camera’s usual</p>
+          <div class="bar thick"><span id="polBar"></span></div>
+          <p class="lede" id="polLine"></p>
+          <div class="heat" id="heat" hidden></div>
+          <div class="meters" id="whyMeters"></div>
+        </div>
         <div class="objects" id="objects"></div>
         <p class="models" id="modelLine"></p>
       </aside>
     </div>
     <details class="internals">
       <summary>Details</summary>
-      <p class="lede" id="polLine"></p>
-      <div class="bar" aria-hidden="true"><span id="polBar"></span></div>
+      <p class="lede" id="polLineDetails"></p>
+      <div class="bar" aria-hidden="true"><span id="polBarDetails"></span></div>
       <table class="model-table" id="modelTable">
         <thead>
           <tr><th>Seat</th><th>Target</th><th>This process</th><th>This trip</th></tr>

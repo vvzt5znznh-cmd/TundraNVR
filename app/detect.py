@@ -22,6 +22,32 @@ class Detection:
     track_id: int | None = None
 
 
+def boxes_payload(
+    detections: list[Detection],
+    frame_wh: tuple[int, int],
+) -> list[dict]:
+    """Normalized boxes so Events can mark where Detect spotted something."""
+    w, h = int(frame_wh[0]), int(frame_wh[1])
+    w = max(w, 1)
+    h = max(h, 1)
+    out: list[dict] = []
+    for det in detections:
+        x1, y1, x2, y2 = (int(v) for v in det.xyxy)
+        out.append(
+            {
+                "cls": det.cls,
+                "conf": round(float(det.conf), 3),
+                "track_id": det.track_id,
+                "xyxy": [x1, y1, x2, y2],
+                "xn": round(x1 / w, 4),
+                "yn": round(y1 / h, 4),
+                "wn": round(max(x2 - x1, 0) / w, 4),
+                "hn": round(max(y2 - y1, 0) / h, 4),
+            }
+        )
+    return out
+
+
 def _resolve_model(name: str) -> str:
     text = (name or "").strip()
     if not text:
@@ -190,7 +216,7 @@ def draw_edge_overlay(
             cv2.rectangle(vis, (x1, y1), (x2, y2), (40, 40, 40), 1)
     vis = cv2.addWeighted(overlay, 0.32, vis, 0.68, 0)
     label = "unusual" if unusual else ("motion" if has_motion else "quiet")
-    banner = f"Raspberry {label}  {score:.2f}  {reason}"
+    banner = f"Edge {label}  {score:.2f}  {reason}"
     cv2.putText(
         vis,
         banner[:78],

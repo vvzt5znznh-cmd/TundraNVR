@@ -10,7 +10,7 @@
   <header class="top" id="chrome"></header>
   <main class="console">
     <div class="log-toolbar">
-      <h2>Operator</h2>
+      <h2>Review</h2>
       <div class="toggle">
         <button type="button" id="allBtn" class="on">All</button>
         <button type="button" id="alertBtn">Alerts</button>
@@ -19,8 +19,16 @@
     <section class="grid-2">
       <div class="log-list" id="rows"><p class="empty">Loading…</p></div>
       <aside class="player panel">
+        <p class="kicker" id="spotKicker">Where it was spotted</p>
+        <div class="spot" id="spotWrap">
+          <img id="marked" alt="Marked still of the detection" hidden />
+          <p class="empty" id="spotEmpty" hidden>Select a clip.</p>
+        </div>
+        <div class="objects" id="eventObjects"></div>
+        <p class="why" id="whyLine"></p>
+        <p class="lede" id="clipLabel">Clip</p>
         <video id="player" controls playsinline></video>
-        <p class="lede" id="detail">Select a clip.</p>
+        <p class="lede" id="detail"></p>
         <ol class="cascade compact" id="detailHandoff"></ol>
         <p id="summary"></p>
         <div class="review">

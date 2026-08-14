@@ -1,6 +1,6 @@
 # TundraNVR
 
-Local camera-detection MVP: camera → Edge (OpenCV motion + Pattern of Life) → Node (YOLO on trips + ByteTrack) → Hub (VLM verifier JSON, fail-open) → operator. See [`README.md`](README.md), [`LICENSING.md`](LICENSING.md), and [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md).
+Local camera-detection MVP: camera → Edge (OpenCV motion + Pattern of Life) → Detect (YOLO on trips + ByteTrack) → Verify (VLM verifier JSON, fail-open) → Review. See [`README.md`](README.md), [`LICENSING.md`](LICENSING.md), and [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md).
 
 ## Cursor Cloud specific instructions
 
@@ -20,7 +20,7 @@ Single Python service. There are no tests or linters configured in this repo bes
 
 ### Run
 - Start the app (dev): `python -m app.main` — `http://0.0.0.0:8000`.
-- Web UI: `/` (Live) and `/events` (Operator). JSON: `/health`, `/api/events`. Dark ops chrome; Incident/Normal on Events.
+- Web UI: `/` (Live) and `/events` (Review). JSON: `/health`, `/api/events`. Dark ops chrome; Incident/Normal on Events. Seats: Edge / Detect / Verify / Review.
 
 ### Testing / behavior notes
 - Motion is OpenCV frame difference. YOLO only on Edge trips. Tracks: one track ≤ one event. Dwell is on `/api/events` (`dwell_s`, `track_id`).

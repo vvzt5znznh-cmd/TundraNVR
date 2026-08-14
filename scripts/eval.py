@@ -190,7 +190,7 @@ def write_table(rows: list[dict], dest: Path) -> None:
         "IEC 62676-4 mapping: **NAR** ≈ operator alerts/camera-day; **Pd** ≈ event-level recall; "
         "**FAR proxy** ≈ 1 − precision. Confidence Level is not estimated on this fixture.",
         "",
-        "| Stage | NAR/cam-day | Pd (recall) | FAR proxy | Precision | P95 ms | Raspberry | Node | Hub handoffs | Hub alerts | Confirms | Node/Rasp | Hub/Node |",
+        "| Stage | NAR/cam-day | Pd (recall) | FAR proxy | Precision | P95 ms | Edge | Detect | Verify handoffs | Verify alerts | Confirms | Detect/Edge | Verify/Detect |",
         "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for row in rows:

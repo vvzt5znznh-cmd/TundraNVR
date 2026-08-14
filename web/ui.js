@@ -3,14 +3,14 @@
   const COPY = {
     brand: "Tundra",
     pages: { live: "Live", events: "Events" },
-    seats: { edge: "Raspberry", node: "Node", hub: "Hub", operator: "Operator" },
+    seats: { edge: "Edge", node: "Detect", hub: "Verify", operator: "Review" },
     questions: {
       edge: "Unusual for this camera?",
       node: "What is it, and how long?",
       hub: "Alert, or suppress?",
       operator: "Incident, or normal?",
     },
-    cascadeIdle: "Raspberry → Node → Hub → Operator",
+    cascadeIdle: "Edge → Detect → Verify → Review",
     target: "Target",
     running: "This process",
     tripRan: "this trip",
@@ -20,7 +20,7 @@
     baselineLearn: (pct) => "Learning " + pct + "%",
     polReady: (n) => "Baseline for this camera is ready (" + n + " motion ticks).",
     polLearn: (n, need) =>
-      "Learning this camera’s usual footprint — " + n + " / " + need + " motion ticks. Raspberry uploads until then.",
+      "Learning this camera’s usual footprint — " + n + " / " + need + " motion ticks. Edge sends every motion until then.",
     setSource: "Set source",
     sourcePh: "RTSP URL, file path, or camera index (0)",
     switching: "Switching…",
@@ -29,7 +29,7 @@
     loadFail: "Could not load.",
     incident: "Incident",
     normal: "Normal",
-    reviewHint: "Normal teaches Raspberry what usual looks like. Incident does not.",
+    reviewHint: "Normal teaches Edge what usual looks like. Incident does not.",
     reviewKept: "Kept as an incident.",
     reviewFolded: "Saved as usual for this camera.",
     selectClip: "Select a clip.",
@@ -39,7 +39,7 @@
     alertPrefix: "Alert: ",
     all: "All",
     alerts: "Alerts",
-    operatorTitle: "Operator",
+    operatorTitle: "Review",
     details: "Details",
     live: "Live",
     waiting: "Waiting",
@@ -51,21 +51,28 @@
     quiet: "Quiet",
     unusual: "Unusual",
     usual: "Usual",
-    quietSub: "Kept on Raspberry. No detector.",
-    unusualSub: "Upload to Node.",
-    usualSub: "Kept on Raspberry. No detector.",
+    learning: "Learning",
+    sentDetect: "Sent to Detect",
+    quietSub: "Kept on Edge. No detector.",
+    unusualSub: "Upload to Detect.",
+    usualSub: "Kept on Edge. No detector.",
     learnBit: (n, need) => " Learning " + n + "/" + need + " motion ticks.",
-    nothingFrom: "Nothing from Raspberry",
-    nothingSub: "Detector idle — usual motion never leaves Raspberry.",
-    closedSub: "Closed here. Hub is not asked.",
-    sendHub: "Sent to Hub to verify.",
+    nothingFrom: "Nothing from Edge",
+    nothingSub: "Detector idle — usual motion never leaves Edge.",
+    closedSub: "Closed here. Verify is not asked.",
+    sendHub: "Sent to Verify.",
     named: "Named",
     unsure: "Unnamed",
     hubIdle: "Idle",
-    hubIdleSub: "Node did not escalate.",
-    hubNeed: "Needs an operator.",
+    hubIdleSub: "Detect did not escalate.",
+    hubNeed: "Needs review.",
     hubLog: "Logged without paging.",
     describing: "Verifying…",
+    spotted: "Where it was spotted",
+    noMark: "No marked still for this event.",
+    clip: "Clip",
+    sampleWhy:
+      "This host is looping a short sample, so the baseline is only the first seconds of that loop — walking the rest of the clip still looks rare.",
   };
 
   function esc(value) {
@@ -147,6 +154,100 @@
       .join("");
   }
 
+  function setBar(id, pct) {
+    const el = document.getElementById(id);
+    if (el) el.style.width = Math.min(100, Math.max(0, pct)) + "%";
+  }
+
+  function renderHeat(el, grid, usual) {
+    if (!el) return;
+    const g = grid || [];
+    if (!g.length) {
+      el.hidden = true;
+      el.innerHTML = "";
+      return;
+    }
+    const u = usual || [];
+    const rows = g.length;
+    const cols = (g[0] || []).length;
+    el.hidden = false;
+    el.style.gridTemplateColumns = "repeat(" + cols + ", 1fr)";
+    let html = "";
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x++) {
+        const motion = Number((g[y] || [])[x] || 0);
+        const freq = Number((u[y] || [])[x] || 0);
+        let bg = "#1c2229";
+        if (freq > 0.08) bg = "rgba(61,186,140,0.38)";
+        if (motion > 0.12) bg = freq < 0.08 ? "rgba(240,113,103,0.78)" : "rgba(61,186,140,0.8)";
+        html += `<i style="background:${bg}" title="usual ${freq.toFixed(2)} · now ${motion.toFixed(2)}"></i>`;
+      }
+    }
+    el.innerHTML = html;
+  }
+
+  function renderMeters(el, edge) {
+    if (!el) return;
+    const rows = [
+      ["Place", Number(edge.occupancy_novelty || 0), "Where motion sits vs this camera’s usual cells"],
+      ["Look", Number(edge.visual_delta || 0), "How much the frame differs from this camera’s usual look"],
+      ["Amount", Number(edge.motion_spike || 0), "How much more motion than this camera usually sees"],
+    ];
+    el.innerHTML = rows
+      .map(([name, val, title]) => {
+        const pct = Math.round(Math.min(1, Math.max(0, val)) * 100);
+        const hot = val >= 0.48 ? " hot" : "";
+        return `<div class="meter" title="${esc(title)}"><span>${esc(name)}</span><div class="bar"><span class="${hot.trim()}" style="width:${pct}%"></span></div><em>${val.toFixed(2)}</em></div>`;
+      })
+      .join("");
+  }
+
+  function fillLearn(data) {
+    const pol = data.pol || {};
+    const edge = (data.handoff || {}).edge || {};
+    const need = pol.learn_samples || 40;
+    const n = pol.samples || 0;
+    const pct = Math.round((pol.progress || 0) * 100);
+    const ready = Boolean(pol.confident);
+    const polPill = document.getElementById("polPill");
+    if (polPill) {
+      polPill.textContent = ready ? COPY.baselineReady : COPY.baselineLearn(pct);
+      polPill.classList.toggle("wait", !ready);
+    }
+    const line = ready ? COPY.polReady(n) : COPY.polLearn(n, need);
+    const polLine = document.getElementById("polLine");
+    if (polLine) polLine.textContent = line;
+    const polLineDetails = document.getElementById("polLineDetails");
+    if (polLineDetails) polLineDetails.textContent = line;
+    setBar("polBar", pct);
+    setBar("polBarHud", pct);
+    setBar("polBarDetails", pct);
+    const hud = document.getElementById("learnHud");
+    if (hud) {
+      hud.classList.toggle("ready", ready);
+      document.getElementById("learnLabel").textContent = ready
+        ? COPY.baselineReady
+        : "Learning this camera’s usual";
+      document.getElementById("learnPct").textContent = pct + "% · " + n + "/" + need;
+    }
+    const kicker = document.getElementById("learnKicker");
+    if (kicker) kicker.textContent = ready ? "This camera’s usual" : "Learning this camera";
+    renderHeat(document.getElementById("heat"), edge.grid, edge.usual_grid);
+    renderMeters(document.getElementById("whyMeters"), edge);
+  }
+
+  function objectChips(items) {
+    return (items || [])
+      .map((d) => {
+        const id = d.track_id != null ? "#" + d.track_id + " " : "";
+        const dwell = d.dwell_s != null ? " " + d.dwell_s + "s" : "";
+        const zone = d.zone ? " · " + d.zone : "";
+        const conf = d.conf != null ? " " + Number(d.conf).toFixed(2) : "";
+        return `<span>${esc(id + (d.cls || "object") + conf + dwell + zone)}</span>`;
+      })
+      .join("");
+  }
+
   function renderCascade(el, handoff, onSeat) {
     if (!el) return;
     const steps = (handoff && handoff.steps) || [];
@@ -176,7 +277,9 @@
     const params = new URLSearchParams(location.search);
     const raw = (params.get("seat") || "").toLowerCase();
     if (raw === "raspberry") seat = "edge";
-    else if (["edge", "node", "hub"].includes(raw)) seat = raw;
+    else if (["edge", "node", "hub", "detect", "verify"].includes(raw)) {
+      seat = raw === "detect" ? "node" : raw === "verify" ? "hub" : raw;
+    }
     document.body.dataset.seat = seat;
     const chrome = document.getElementById("chrome");
     mountChrome(chrome, { page: "live", seat });
@@ -190,6 +293,8 @@
         return;
       }
       if (next === "raspberry") next = "edge";
+      if (next === "detect") next = "node";
+      if (next === "verify") next = "hub";
       if (!["edge", "node", "hub"].includes(next)) return;
       seat = next;
       document.body.dataset.seat = seat;
@@ -230,40 +335,29 @@
     }
 
     function fillDetails(data) {
+      fillLearn(data);
+      fillModelTable(data.models, seat);
       const pol = data.pol || {};
       const edge = (data.handoff || {}).edge || {};
       const need = pol.learn_samples || 40;
       const n = pol.samples || 0;
       const pct = Math.round((pol.progress || 0) * 100);
-      const polPill = document.getElementById("polPill");
-      if (pol.confident) {
-        polPill.textContent = COPY.baselineReady;
-        polPill.classList.remove("wait");
-      } else {
-        polPill.textContent = COPY.baselineLearn(pct);
-        polPill.classList.add("wait");
-      }
-      document.getElementById("polLine").textContent = pol.confident
-        ? COPY.polReady(n)
-        : COPY.polLearn(n, need);
-      document.getElementById("polBar").style.width = Math.min(100, pct) + "%";
-      fillModelTable(data.models, seat);
       const tracks =
         (data.tracks || []).map((t) => "#" + t.id + " " + t.cls + " " + t.dwell_s + "s").join(", ") || "—";
       const escalate = data.escalation || {};
       const rows = [
         ["Baseline", (pol.confident ? COPY.baselineReady : COPY.baselineLearn(pct)) + " · " + n + " / " + need],
         ["Unusual score", (edge.score != null ? Number(edge.score).toFixed(2) : "—") + (edge.reason ? " · " + edge.reason : "")],
-        ["Occupancy / look", "place " + Number(edge.occupancy_novelty || 0).toFixed(2) + " · visual " + Number(edge.visual_delta || 0).toFixed(2)],
+        ["Why", edge.why || edge.reason || "—"],
+        ["Place / look / amount", Number(edge.occupancy_novelty || 0).toFixed(2) + " · " + Number(edge.visual_delta || 0).toFixed(2) + " · " + Number(edge.motion_spike || 0).toFixed(2)],
         ["Tracks", tracks],
         [
           "Escalation",
-          (escalate.mode || "recall") +
-            " · R " +
+          "Edge " +
             (escalate.raspberry_trips || 0) +
-            " → N " +
+            " → Detect " +
             (escalate.node_proposals || 0) +
-            " → Hub " +
+            " → Verify " +
             (escalate.hub_alerts || 0),
         ],
         ["Camera", data.source || currentSource || "—"],
@@ -312,6 +406,7 @@
         document.getElementById("sceneKicker").textContent = COPY.questions[seat];
         const scene = document.getElementById("scene");
         const sub = document.getElementById("sceneSub");
+        const whyEl = document.getElementById("whyDetail");
         const objs = document.getElementById("objects");
         const card = document.getElementById("sceneCard");
         const models = data.models || {};
@@ -321,16 +416,28 @@
         line.className = "models" + (models[seatKey] && !models[seatKey].match ? " gap" : "");
         card.classList.toggle("alert", Boolean(hub.page_operator && seat === "hub"));
         const learnBit = pol.confident ? "" : COPY.learnBit(n, need);
+        const whyText = [edge.why || "", data.fallback ? COPY.sampleWhy : ""].filter(Boolean).join(" ");
         if (seat === "edge") {
           if (!data.last_motion) {
             scene.textContent = COPY.quiet;
             sub.textContent = COPY.quietSub + learnBit;
-          } else if (edge.upload) {
+            whyEl.textContent = "";
+          } else if (edge.unusual) {
             scene.textContent = COPY.unusual;
             sub.textContent = (edge.reason || COPY.unusualSub) + learnBit;
+            whyEl.textContent = whyText;
+          } else if (!pol.confident) {
+            scene.textContent = COPY.learning;
+            sub.textContent = COPY.polLearn(n, need);
+            whyEl.textContent = whyText;
+          } else if (data.fallback && edge.upload) {
+            scene.textContent = COPY.sentDetect;
+            sub.textContent = COPY.sampleWhy;
+            whyEl.textContent = "";
           } else {
             scene.textContent = COPY.usual;
             sub.textContent = COPY.usualSub + learnBit;
+            whyEl.textContent = edge.why || "";
           }
           objs.innerHTML = "";
         } else if (seat === "node") {
@@ -351,20 +458,18 @@
                 : dets.map((d) => d.cls).join(", ") || COPY.unsure;
             sub.textContent = COPY.sendHub;
           }
-          objs.innerHTML = dets
-            .map(
-              (d) =>
-                `<span>${d.track_id != null ? "#" + d.track_id + " " : ""}${esc(d.cls)}${d.dwell_s != null ? " " + d.dwell_s + "s" : ""}</span>`
-            )
-            .join("");
+          whyEl.textContent = "";
+          objs.innerHTML = objectChips(dets);
         } else if (!hub.ran) {
           scene.textContent = COPY.hubIdle;
           sub.textContent = COPY.hubIdleSub;
+          whyEl.textContent = "";
           objs.innerHTML = "";
         } else {
           scene.textContent = data.last_scene || hub.detail || COPY.describing;
           sub.textContent = hub.page_operator ? COPY.hubNeed : COPY.hubLog;
-          objs.innerHTML = (node.classes || []).map((d) => `<span>${esc(d.cls)}</span>`).join("");
+          whyEl.textContent = "";
+          objs.innerHTML = objectChips(node.classes || data.last_detections || []);
         }
       } catch (err) {
         document.getElementById("status").textContent = COPY.error;
@@ -425,6 +530,12 @@
     let selected = null;
 
     function headline(event) {
+      const boxes = event.boxes || [];
+      if (boxes.length) {
+        return boxes
+          .map((b) => (b.track_id != null ? "#" + b.track_id + " " : "") + (b.cls || "object"))
+          .join(", ");
+      }
       if (event.summary) {
         const line = event.summary.split(/(?<=[.!?])\s/)[0];
         return line.length > 110 ? line.slice(0, 108) + "…" : line;
@@ -435,6 +546,22 @@
     function stopLabel(event) {
       if (event.operator_status) return event.operator_status;
       return event.stopped_at || "";
+    }
+
+    function whyText(event) {
+      const why = event.why || {};
+      const bits = [why.detail || why.reason || event.anomaly_reason || ""];
+      if (why.occupancy_novelty != null) {
+        bits.push(
+          "Place " +
+            Number(why.occupancy_novelty).toFixed(2) +
+            " · look " +
+            Number(why.visual_delta || 0).toFixed(2) +
+            " · amount " +
+            Number(why.motion_spike || 0).toFixed(2)
+        );
+      }
+      return bits.filter(Boolean).join(" ");
     }
 
     function play(event) {
@@ -449,6 +576,30 @@
       } else {
         player.removeAttribute("src");
       }
+      const marked = document.getElementById("marked");
+      const spotEmpty = document.getElementById("spotEmpty");
+      if (event.thumb_url) {
+        marked.hidden = false;
+        spotEmpty.hidden = true;
+        marked.src = event.thumb_url + "?t=" + encodeURIComponent(event.ts_end || event.id);
+      } else {
+        marked.hidden = true;
+        marked.removeAttribute("src");
+        spotEmpty.hidden = false;
+        spotEmpty.textContent = COPY.noMark;
+      }
+      const boxes = event.boxes || [];
+      const chips = boxes.length
+        ? boxes
+        : (event.classes || []).map((cls) => ({
+            cls,
+            track_id: event.track_id,
+            dwell_s: event.dwell_s,
+            zone: event.zone,
+            conf: event.score,
+          }));
+      document.getElementById("eventObjects").innerHTML = objectChips(chips);
+      document.getElementById("whyLine").textContent = whyText(event);
       document.getElementById("detail").textContent =
         `${fmt(event.ts_start)} · track ${event.track_id ?? "—"} · dwell ${event.dwell_s ?? "—"}s · ${(event.classes || []).join(", ") || "—"}`;
       document.getElementById("summary").textContent = [
@@ -474,6 +625,11 @@
       if (!list.length) {
         rowsEl.innerHTML = `<p class="empty">${alertsOnly ? COPY.emptyAlerts : COPY.emptyAll}</p>`;
         document.getElementById("detail").textContent = COPY.selectClip;
+        document.getElementById("marked").hidden = true;
+        document.getElementById("spotEmpty").hidden = false;
+        document.getElementById("spotEmpty").textContent = COPY.selectClip;
+        document.getElementById("eventObjects").innerHTML = "";
+        document.getElementById("whyLine").textContent = "";
         return;
       }
       rowsEl.innerHTML = list

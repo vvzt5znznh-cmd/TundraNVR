@@ -50,12 +50,14 @@ class PolScore:
     grid: list[list[float]] = field(default_factory=list)
     usual_grid: list[list[float]] = field(default_factory=list)
     confident: bool = False
+    why: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "unusual": self.unusual,
             "score": round(self.score, 3),
             "reason": self.reason,
+            "why": self.why,
             "state": self.state,
             "samples": self.samples,
             "confident": self.confident,
@@ -123,19 +125,40 @@ class PatternOfLife:
                 unusual = True
                 score = max(score, 0.45)
                 reason = "learning this camera"
+                why = (
+                    "Edge is still mapping where this camera is usually busy. "
+                    "Until that baseline is ready, every motion is sent to Detect."
+                )
             elif not has_motion:
                 unusual = False
                 reason = "no motion"
+                why = "No pixel change on this tick."
             else:
                 unusual = score >= 0.48
                 parts = []
+                why_parts = []
                 if occ >= 0.48:
-                    parts.append("motion in a rare place")
+                    parts.append("motion where this camera is usually still")
+                    why_parts.append(
+                        "Motion is in cells this camera usually leaves empty "
+                        f"(place {occ:.2f})."
+                    )
                 if vis_delta >= 0.48:
                     parts.append("frame does not match this camera")
+                    why_parts.append(
+                        f"The frame no longer matches this camera’s usual look (look {vis_delta:.2f})."
+                    )
                 if spike >= 0.48:
                     parts.append("more motion than usual")
+                    why_parts.append(
+                        f"There is more motion than this camera usually sees (amount {spike:.2f})."
+                    )
                 reason = ", ".join(parts) if parts else "looks like this camera"
+                why = (
+                    " ".join(why_parts)
+                    if why_parts
+                    else "Motion sits on this camera’s usual footprint."
+                )
             usual = self._usual_freq().tolist()
             features = {
                 "grid": np.round(grid, 3).tolist(),
@@ -155,6 +178,7 @@ class PatternOfLife:
                 grid=np.round(grid, 3).tolist(),
                 usual_grid=np.round(np.array(usual), 3).tolist(),
                 confident=not learning,
+                why=why,
             )
             self._update_locked(
                 visual,

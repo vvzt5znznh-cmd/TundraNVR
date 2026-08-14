@@ -13,7 +13,7 @@ import numpy as np
 
 from app.config import AppConfig
 from app.db import EventStore, utc_now
-from app.detect import Detection, ObjectDetector, draw_edge_overlay, draw_overlay
+from app.detect import Detection, ObjectDetector, boxes_payload, draw_edge_overlay, draw_overlay
 from app.embed import EmbeddingIndex, thumb_hist
 from app.escalate import decide_hub
 from app.fusion import FusionBus, clock_context
@@ -22,7 +22,7 @@ from app.mqtt_bus import MqttBus, MqttConfig
 from app.pol import PatternOfLife, absorb_into_file
 from app.record import ClipWriter, NullWriter, cleanup_old_events, save_thumb
 from app.security import redact_source
-from app.tiers import models_payload
+from app.tiers import SEAT_LABELS, models_payload
 from app.track import ByteTracker, Track, unattended_bags
 from app.verify import verify_event
 from app.vision import effective_provider, fallback_summary
@@ -528,22 +528,22 @@ class Pipeline:
             self._last_pol_unusual,
             self._last_pol_reason,
         )
-        node_banner = "Node · idle"
+        node_banner = "Detect · idle"
         if self._live_tracks:
             bits = [
                 f"#{t.track_id} {t.cls} {t.dwell_s:.0f}s"
                 for t in self._live_tracks[:3]
             ]
-            node_banner = "Node · " + ", ".join(bits)
+            node_banner = "Detect · " + ", ".join(bits)
         elif dets:
-            node_banner = "Node · " + ", ".join(f"{d.cls} {d.conf:.2f}" for d in dets[:3])
+            node_banner = "Detect · " + ", ".join(f"{d.cls} {d.conf:.2f}" for d in dets[:3])
         elif self._yolo_ran:
-            node_banner = "Node · unnamed"
+            node_banner = "Detect · unnamed"
         elif self._has_motion:
-            node_banner = "Node · Raspberry kept this locally"
+            node_banner = "Detect · Edge kept this locally"
         node = draw_overlay(frame, dets, self._motion_area, self._has_motion, banner=node_banner)
         hub_dets = dets if self._hub_banner else []
-        hub_banner = self._hub_banner or "Hub idle — waiting for Node to escalate"
+        hub_banner = self._hub_banner or "Verify idle — waiting for Detect to escalate"
         hub = draw_overlay(frame, hub_dets, self._motion_area, self._has_motion, banner=hub_banner[:72])
         jpeg_edge = _encode_jpeg(edge, self.cfg.pipeline.jpeg_quality)
         jpeg_node = _encode_jpeg(node, self.cfg.pipeline.jpeg_quality)
@@ -662,11 +662,21 @@ class Pipeline:
                     "conf": round(t.conf, 3),
                     "track_id": t.track_id,
                     "dwell_s": round(t.dwell_s, 1),
+                    "xyxy": [int(v) for v in t.xyxy],
+                    "zone": t.zone_name or "",
                 }
                 for t in tracks
-            ] or [{"cls": d.cls, "conf": round(d.conf, 3)} for d in detections]
+            ] or [
+                {
+                    "cls": d.cls,
+                    "conf": round(d.conf, 3),
+                    "track_id": d.track_id,
+                    "xyxy": [int(v) for v in d.xyxy],
+                }
+                for d in detections
+            ]
             scene = hub_detail or fallback_summary(labels, peak, anomaly_reason)
-            self._hub_banner = ("Hub · " + hub_detail) if hub_needed else ""
+            self._hub_banner = ("Verify · " + hub_detail) if hub_needed else ""
             with self._lock:
                 self.status.yolo_ran = yolo_ran
                 self.status.last_motion = has_motion
@@ -678,6 +688,7 @@ class Pipeline:
             self.mqtt.publish("state", {"motion": has_motion, "tracks": payload, "fusion": fusion_d})
             feats = dict(features)
             feats["fusion"] = fusion_d
+            self._attach_spot(feats, frame, overlay_dets, pol)
             with self._event_lock:
                 for tr in tracks:
                     if not tr.confirmed:
@@ -910,11 +921,12 @@ class Pipeline:
         node_note = fallback_summary(classes, score, anomaly_reason)
         if not active.hub_needed:
             labels = ", ".join(classes) if classes else "motion"
-            node_note = f"Named {labels}. Node closed this without asking Hub."
+            node_note = f"Named {labels}. Detect closed this without asking Verify."
         thumb_rel = f"thumbs/{active.thumb_name}" if self.cfg.events.write_media else None
         clip_rel = f"clips/{active.clip_name}" if self.cfg.events.write_media else None
         event_id = None
         try:
+            self._refresh_event_thumb(active)
             event_id = self.store.insert(
                 ts_start=active.ts_start,
                 ts_end=utc_now(),
@@ -979,6 +991,53 @@ class Pipeline:
             cleanup_old_events(self.store, self.cfg.data_dir, self.cfg.events.retention_days)
         except Exception:
             log.exception("Retention cleanup failed")
+
+    def _attach_spot(self, feats: dict, frame: np.ndarray, detections: list[Detection], pol) -> None:
+        h, w = frame.shape[:2]
+        feats["frame"] = {"w": int(w), "h": int(h)}
+        feats["boxes"] = boxes_payload(detections, (w, h))
+        detail = getattr(pol, "why", "") or pol.reason
+        if self._fallback:
+            extra = (
+                "This host is looping a short sample, so the baseline is only the first "
+                "seconds of that loop — walking the rest of the clip still looks rare."
+            )
+            if extra not in detail:
+                detail = f"{detail} {extra}".strip()
+        feats["why"] = {
+            "reason": pol.reason,
+            "detail": detail,
+            "score": round(float(pol.score), 3),
+            "occupancy_novelty": round(float(pol.occupancy_novelty), 3),
+            "visual_delta": round(float(pol.visual_delta), 3),
+            "motion_spike": round(float(pol.motion_spike), 3),
+            "learning": not bool(pol.confident),
+            "fallback": bool(self._fallback),
+            "samples": int(pol.samples),
+        }
+
+    def _refresh_event_thumb(self, active: _ActiveEvent) -> None:
+        if not self.cfg.events.write_media or active.last_frame is None:
+            return
+        dets = active.last_dets or []
+        labels = ", ".join(
+            f"#{d.track_id} {d.cls}" if d.track_id is not None else d.cls for d in dets[:3]
+        ) or "motion"
+        vis = draw_overlay(active.last_frame, dets, banner=f"Spotted · {labels}"[:72])
+        try:
+            save_thumb(
+                vis,
+                self.cfg.thumbs_dir / active.thumb_name,
+                self.cfg.pipeline.jpeg_quality,
+            )
+        except Exception:
+            log.exception("Failed to refresh marked thumb for %s", active.thumb_name)
+            return
+        if dets:
+            h, w = active.last_frame.shape[:2]
+            active.features = dict(active.features or {})
+            active.features["boxes"] = boxes_payload(dets, (w, h))
+            active.features["frame"] = {"w": int(w), "h": int(h)}
 
     def _run_verifier(
         self,
@@ -1113,7 +1172,7 @@ def _handoff_payload(
     steps = [
         {
             "stage": "edge",
-            "label": "Raspberry",
+            "label": SEAT_LABELS["edge"],
             "decision": edge_decision,
             "detail": edge_detail,
         }
@@ -1122,28 +1181,49 @@ def _handoff_payload(
         steps.append(
             {
                 "stage": "node",
-                "label": "Node",
+                "label": SEAT_LABELS["node"],
                 "decision": "skipped",
-                "detail": "Raspberry kept this locally · detector idle",
+                "detail": "Edge kept this locally · detector idle",
             }
         )
-        steps.append({"stage": "hub", "label": "Hub", "decision": "skipped", "detail": "Node did not escalate"})
-        steps.append({"stage": "operator", "label": "Operator", "decision": "skipped", "detail": ""})
+        steps.append(
+            {
+                "stage": "hub",
+                "label": SEAT_LABELS["hub"],
+                "decision": "skipped",
+                "detail": "Detect did not escalate",
+            }
+        )
+        steps.append(
+            {
+                "stage": "operator",
+                "label": SEAT_LABELS["operator"],
+                "decision": "skipped",
+                "detail": "",
+            }
+        )
         stopped = "edge"
     else:
         if hub_needed:
-            node_detail = f"{labels} · send to Hub"
+            node_detail = f"{labels} · send to Verify"
             node_decision = "escalate"
         else:
             node_detail = f"{labels} · named and closed"
             node_decision = "closed"
-        steps.append({"stage": "node", "label": "Node", "decision": node_decision, "detail": node_detail})
+        steps.append(
+            {
+                "stage": "node",
+                "label": SEAT_LABELS["node"],
+                "decision": node_decision,
+                "detail": node_detail,
+            }
+        )
         if hub_needed:
             hub_decision = "alert" if page_operator else "log"
             steps.append(
                 {
                     "stage": "hub",
-                    "label": "Hub",
+                    "label": SEAT_LABELS["hub"],
                     "decision": hub_decision,
                     "detail": (hub_detail or anomaly_reason or labels)[:160],
                 }
@@ -1152,7 +1232,7 @@ def _handoff_payload(
                 steps.append(
                     {
                         "stage": "operator",
-                        "label": "Operator",
+                        "label": SEAT_LABELS["operator"],
                         "decision": "needed",
                         "detail": "Incident or Normal",
                     }
@@ -1162,19 +1242,33 @@ def _handoff_payload(
                 steps.append(
                     {
                         "stage": "operator",
-                        "label": "Operator",
+                        "label": SEAT_LABELS["operator"],
                         "decision": "skipped",
-                        "detail": "Hub logged without paging",
+                        "detail": "Verify logged without paging",
                     }
                 )
                 stopped = "hub"
         else:
-            steps.append({"stage": "hub", "label": "Hub", "decision": "skipped", "detail": "Node closed this"})
-            steps.append({"stage": "operator", "label": "Operator", "decision": "skipped", "detail": ""})
+            steps.append(
+                {
+                    "stage": "hub",
+                    "label": SEAT_LABELS["hub"],
+                    "decision": "skipped",
+                    "detail": "Detect closed this",
+                }
+            )
+            steps.append(
+                {
+                    "stage": "operator",
+                    "label": SEAT_LABELS["operator"],
+                    "decision": "skipped",
+                    "detail": "",
+                }
+            )
             stopped = "node"
 
     edge_info = pol.as_dict()
-    edge_info["upload"] = bool(edge_decision == "unusual")
+    edge_info["upload"] = bool(node_received)
     return {
         "stopped_at": stopped,
         "steps": steps,
@@ -1188,6 +1282,7 @@ def _handoff_payload(
                     "cls": d.cls,
                     "conf": round(d.conf, 3),
                     "track_id": d.track_id,
+                    "xyxy": [int(v) for v in d.xyxy],
                 }
                 for d in detections
             ],

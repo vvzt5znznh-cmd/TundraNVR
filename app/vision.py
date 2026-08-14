@@ -22,10 +22,7 @@ def fallback_summary(
     if not classes:
         return "Motion was detected, but no allow-listed object was named."
     if anomaly_reason:
-        return (
-            f"Detected {labels} (score {score:.2f}). "
-            f"Flagged as unusual for a building camera: {anomaly_reason}."
-        )
+        return f"Detected {labels} (score {score:.2f}). {anomaly_reason}."
     if "drone" in classes:
         return f"Detected {labels} (score {score:.2f}). A drone near a building is worth an alert."
     if {"person"} & set(classes):

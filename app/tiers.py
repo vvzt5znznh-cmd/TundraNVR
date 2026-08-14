@@ -7,6 +7,14 @@ from pathlib import Path
 from app.config import AppConfig
 from app.vision import effective_provider
 
+# Operator-facing seat names. Internal keys stay edge / node / hub / operator.
+SEAT_LABELS = {
+    "edge": "Edge",
+    "node": "Detect",
+    "hub": "Verify",
+    "operator": "Review",
+}
+
 
 def _norm(text: str) -> str:
     return "".join(ch for ch in (text or "").lower() if ch.isalnum())
@@ -44,7 +52,7 @@ def models_payload(
     edge_running = "OpenCV + Pattern of Life"
     return {
         "edge": {
-            "label": "Raspberry",
+            "label": SEAT_LABELS["edge"],
             "want": cfg.targets.edge,
             "running": edge_running,
             "match": _match(cfg.targets.edge, edge_running) or "no neural" in cfg.targets.edge.lower() or "no nn" in cfg.targets.edge.lower(),
@@ -52,7 +60,7 @@ def models_payload(
             "note": "No neural net on this seat.",
         },
         "node": {
-            "label": "Node",
+            "label": SEAT_LABELS["node"],
             "want": cfg.targets.node,
             "running": f"{node_name} + ByteTrack",
             "match": _match(cfg.targets.node, node_name),
@@ -60,7 +68,7 @@ def models_payload(
             "note": "Detector only on Edge trips.",
         },
         "hub": {
-            "label": "Hub",
+            "label": SEAT_LABELS["hub"],
             "want": cfg.targets.hub,
             "running": hub_name,
             "match": _match(cfg.targets.hub, hub_name),

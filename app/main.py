@@ -195,6 +195,10 @@ def app_js() -> FileResponse:
 def _event_json(row: dict) -> dict:
     thumb = row.get("thumb_path")
     clip = row.get("clip_path")
+    feat = row.get("features") or {}
+    why = feat.get("why") or {}
+    if not why and row.get("anomaly_reason"):
+        why = {"reason": row.get("anomaly_reason") or "", "detail": row.get("anomaly_reason") or ""}
     return {
         "id": row["id"],
         "ts_start": row["ts_start"],
@@ -212,11 +216,15 @@ def _event_json(row: dict) -> dict:
         "handoff": row.get("handoff") or {},
         "operator_status": row.get("operator_status") or "",
         "track_id": row.get("track_id"),
-        "dwell_s": (row.get("features") or {}).get("dwell_s"),
+        "dwell_s": feat.get("dwell_s"),
+        "zone": feat.get("zone") or "",
         "verifier_provider": row.get("verifier_provider") or "",
         "verifier_status": row.get("verifier_status") or "",
         "novelty_score": row.get("novelty_score"),
-        "features": row.get("features") or {},
+        "features": feat,
+        "boxes": feat.get("boxes") or [],
+        "why": why,
+        "frame": feat.get("frame") or {},
     }
 
 
