@@ -13,6 +13,7 @@ One camera or one sample video is enough.
 | Ingest | OpenCV `VideoCapture` |
 | Motion | OpenCV frame differencing |
 | Detection | Ultralytics YOLO nano on CPU |
+| Scene notes | Ollama, OpenAI vision, or YOLO fallback |
 | Storage | SQLite + filesystem clips/thumbs |
 | Live view | MJPEG / JPEG over HTTP |
 | Config | `config.yaml` |
@@ -40,7 +41,7 @@ Download sample clips (city street, parking lot, cars, wildlife, livestock, airc
 python scripts/download_sample.py
 ```
 
-Default source is `data/samples/city.mp4`. The live page lists each clip as a button. Or point `camera.source` at an RTSP URL, HTTP stream, local file, or camera index (`0`).
+Default source is `data/samples/city.mp4`. The live page lists each clip as a button, plus official NYC DOT traffic stills for a live outdoor test. Or point `camera.source` at an RTSP URL, HTTP stream, JPEG still URL, local file, or camera index (`0`).
 
 ## Run
 
@@ -74,10 +75,29 @@ See [`config.yaml`](config.yaml). The live page **Apply** button writes `data/se
 - `events.pre_seconds` / `post_seconds` / `cooldown_seconds` — clip window and anti-flood
 - `events.retention_days` — delete old events, thumbs, and clips
 - `server.host` / `server.port`
+- `vision.enabled` / `vision.provider` — scene notes after each event (`auto`, `ollama`, `openai`, or `off`)
+- `vision.ollama_url` / `vision.ollama_model` — local vision model (default `moondream` at `http://127.0.0.1:11434`)
+- `vision.openai_model` — used when `OPENAI_API_KEY` is set (default `gpt-4o-mini`)
+
+## Scene notes
+
+After an event is saved, a short caption is written to the event’s `summary` and shown on `/events`. With `vision.provider: auto` the app tries, in order:
+
+1. A local Ollama vision model (`ollama pull moondream`)
+2. OpenAI if `OPENAI_API_KEY` is in the environment
+3. A YOLO-based sentence from the detected classes (always available; no extra install)
+
+This is a still-image caption, not a full video narrative. Set `vision.provider: off` to skip the LLM and keep only the YOLO note.
+
+## Public webcams
+
+The live page lists official [NYC DOT](https://webcams.nyctmc.org/) JPEG stills. Those URLs are single frames, not video streams; ingest re-fetches about every 1.5 seconds. They are public traffic cameras, so expect road scenes, not a private property feed.
+
+Do not point the source at random unsecured IP cameras. Stick to feeds the operator publishes.
 
 ## Pipeline
 
-Motion without a matching class does **not** create events. A matching detection writes an event, a JPEG thumb, and a short MP4 clip (H.264 via ffmpeg when available). If the stream drops, ingest reopens the capture after a short backoff.
+Motion without a matching class does **not** create events. A matching detection writes an event, a JPEG thumb, a short MP4 clip (H.264 via ffmpeg when available), and a scene note. If the stream drops, ingest reopens the capture after a short backoff. JPEG still URLs are re-fetched on an interval instead of treated as end-of-file.
 
 ## Non-goals
 

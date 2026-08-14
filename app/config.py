@@ -112,6 +112,40 @@ class ServerConfig:
 
 
 @dataclass
+class VisionConfig:
+    enabled: bool = True
+    provider: str = "auto"
+    ollama_url: str = "http://127.0.0.1:11434"
+    ollama_model: str = "moondream"
+    openai_model: str = "gpt-4o-mini"
+    timeout_seconds: float = 25.0
+
+
+PUBLIC_WEBCAMS = [
+    {
+        "path": "https://webcams.nyctmc.org/api/cameras/8a6bc417-4877-4ebe-8052-88c1b261baf1/image",
+        "label": "NYC Central Park West",
+    },
+    {
+        "path": "https://webcams.nyctmc.org/api/cameras/ecba28cb-ac70-4d25-abcb-6506111ea120/image",
+        "label": "NYC FDR at Brooklyn Bridge",
+    },
+    {
+        "path": "https://webcams.nyctmc.org/api/cameras/332f161d-47cb-4c8a-b6b6-5ad48a55c978/image",
+        "label": "NYC Central Park South",
+    },
+    {
+        "path": "https://webcams.nyctmc.org/api/cameras/7d06c900-a5e5-49ca-96b9-93a0662a2069/image",
+        "label": "NYC Verrazano Bridge",
+    },
+    {
+        "path": "https://webcams.nyctmc.org/api/cameras/0f3b6031-fe36-43df-b2c7-6120e0580309/image",
+        "label": "NYC Brooklyn Bridge walkway",
+    },
+]
+
+
+@dataclass
 class AppConfig:
     camera: CameraConfig
     pipeline: PipelineConfig
@@ -119,6 +153,7 @@ class AppConfig:
     detection: DetectionConfig
     events: EventsConfig
     server: ServerConfig
+    vision: VisionConfig
     root: Path = ROOT
 
     @property
@@ -167,6 +202,7 @@ def load_config(path: Path | None = None) -> AppConfig:
     detection_raw = raw.get("detection") or {}
     events_raw = raw.get("events") or {}
     server_raw = raw.get("server") or {}
+    vision_raw = raw.get("vision") or {}
 
     cfg = AppConfig(
         camera=CameraConfig(
@@ -201,6 +237,14 @@ def load_config(path: Path | None = None) -> AppConfig:
         server=ServerConfig(
             host=str(server_raw.get("host", "0.0.0.0")),
             port=int(server_raw.get("port", 8000)),
+        ),
+        vision=VisionConfig(
+            enabled=bool(vision_raw.get("enabled", True)),
+            provider=str(vision_raw.get("provider", "auto")),
+            ollama_url=str(vision_raw.get("ollama_url", "http://127.0.0.1:11434")),
+            ollama_model=str(vision_raw.get("ollama_model", "moondream")),
+            openai_model=str(vision_raw.get("openai_model", "gpt-4o-mini")),
+            timeout_seconds=float(vision_raw.get("timeout_seconds", 25)),
         ),
         root=ROOT,
     )
@@ -270,4 +314,9 @@ def public_settings(cfg: AppConfig) -> dict[str, Any]:
         "model": cfg.detection.model,
         "suggested_models": SUGGESTED_MODELS,
         "suggested_sources": listed_samples(),
+        "suggested_webcams": PUBLIC_WEBCAMS,
+        "vision": {
+            "enabled": cfg.vision.enabled,
+            "provider": cfg.vision.provider,
+        },
     }

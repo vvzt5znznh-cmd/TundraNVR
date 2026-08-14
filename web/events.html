@@ -63,6 +63,13 @@
       border: 1px solid var(--line);
     }
     .empty, .muted { color: var(--muted); }
+    td.scene { color: var(--muted); font-size: 13px; max-width: 240px; }
+    .summary {
+      margin-top: 12px;
+      line-height: 1.45;
+      font-size: 14px;
+      white-space: pre-wrap;
+    }
   </style>
 </head>
 <body>
@@ -85,22 +92,25 @@
             <th>Time</th>
             <th>Classes</th>
             <th>Score</th>
+            <th>Scene</th>
           </tr>
         </thead>
         <tbody id="rows">
-          <tr><td class="empty" colspan="4">Loading…</td></tr>
+          <tr><td class="empty" colspan="5">Loading…</td></tr>
         </tbody>
       </table>
     </section>
     <section>
       <video id="player" controls playsinline></video>
       <p class="muted" id="detail">Select an event to play the clip.</p>
+      <p class="summary" id="summary"></p>
     </section>
   </main>
   <script>
     const rowsEl = document.getElementById("rows");
     const player = document.getElementById("player");
     const detail = document.getElementById("detail");
+    const summaryEl = document.getElementById("summary");
 
     function fmt(ts) {
       if (!ts) return "";
@@ -117,13 +127,14 @@
         player.play().catch(() => {});
       }
       detail.textContent = `#${event.id}  ${fmt(event.ts_start)}  ${(event.classes || []).join(", ")}  score ${event.score ?? ""}`;
+      summaryEl.textContent = event.summary || "Scene note not ready yet — refresh in a few seconds.";
     }
 
     async function loadEvents() {
       const res = await fetch("/api/events?limit=80");
       const events = await res.json();
       if (!events.length) {
-        rowsEl.innerHTML = `<tr><td class="empty" colspan="4">No events yet. Motion with a matching class will show up here.</td></tr>`;
+        rowsEl.innerHTML = `<tr><td class="empty" colspan="5">No events yet. Motion with a matching class will show up here.</td></tr>`;
         return;
       }
       rowsEl.innerHTML = events.map((e) => `
@@ -132,6 +143,7 @@
           <td>${fmt(e.ts_start)}</td>
           <td>${(e.classes || []).join(", ")}</td>
           <td>${e.score ?? ""}</td>
+          <td class="scene">${e.summary ? e.summary.slice(0, 90) + (e.summary.length > 90 ? "…" : "") : "…"}</td>
         </tr>
       `).join("");
       for (const e of events) {

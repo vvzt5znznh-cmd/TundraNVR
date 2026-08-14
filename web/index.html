@@ -110,6 +110,7 @@
       font-size: 12px;
     }
     .chips button:hover { border-color: var(--accent); }
+    .hint { margin: 0; color: var(--muted); font-size: 12px; }
     .msg { font-size: 13px; color: var(--muted); min-height: 1.2em; }
     .msg.err { color: #ff8b8b; }
     .msg.ok { color: var(--ok); }
@@ -154,6 +155,9 @@
       <datalist id="sourceOptions"></datalist>
       <datalist id="modelOptions"></datalist>
       <div class="chips" id="sourceChips"></div>
+      <p class="hint">Official live stills (NYC DOT). Apply to use one as the source.</p>
+      <div class="chips" id="webcamChips"></div>
+      <p class="hint" id="visionHint"></p>
       <div class="msg" id="settingsMsg"></div>
     </form>
   </main>
@@ -189,6 +193,7 @@
     const sourceChips = document.getElementById("sourceChips");
     const modelInput = document.getElementById("modelInput");
     const modelOptions = document.getElementById("modelOptions");
+    const webcamChips = document.getElementById("webcamChips");
     const applyBtn = document.getElementById("apply");
     const settingsMsg = document.getElementById("settingsMsg");
 
@@ -218,6 +223,22 @@
           sourceInput.value = btn.getAttribute("data-path") || "";
         });
       });
+      const cams = data.suggested_webcams || [];
+      sourceOptions.innerHTML += cams
+        .map((s) => `<option value="${s.path}"></option>`)
+        .join("");
+      webcamChips.innerHTML = cams
+        .map((s) => `<button type="button" data-path="${s.path}">${s.label}</button>`)
+        .join("");
+      webcamChips.querySelectorAll("button").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          sourceInput.value = btn.getAttribute("data-path") || "";
+        });
+      });
+      const vis = data.vision || {};
+      document.getElementById("visionHint").textContent = vis.enabled
+        ? `Scene notes: ${vis.provider} (Ollama, OpenAI key, or YOLO fallback).`
+        : "Scene notes are off.";
     }
 
     document.getElementById("settings").addEventListener("submit", async (ev) => {

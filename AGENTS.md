@@ -25,4 +25,6 @@ Single Python service. There are no tests or linters configured in this repo.
 ### Testing / behavior notes
 - The bundled sample clips loop, so `/health` can report a high ingest `fps` for file sources — that is expected, not a bug.
 - Live-view bounding boxes and the `last_detections`/motion status are transient: overlays are only drawn for a short TTL after a detection, so a single screenshot of `/` may show none. Prefer `/api/events` and `/health` (polled) as reliable evidence that detection is working. Detection only runs when motion is present, and only allow-listed classes (people, vehicles, aircraft, common animals) create events. Stock YOLO has no drone class.
-- Events (row in `data/events.db` + thumb in `data/thumbs/` + clip in `data/clips/`) are the core end-to-end signal that the pipeline works.
+- Events (row in `data/events.db` + thumb in `data/thumbs/` + clip in `data/clips/` + optional `summary` scene note) are the core end-to-end signal that the pipeline works.
+- Scene notes: `vision.provider: auto` tries local Ollama (`moondream`), then `OPENAI_API_KEY`, then a YOLO-class sentence. `/api/events` includes `summary`; `/health` includes `vision`.
+- Official NYC DOT JPEG stills are listed on the live page (`suggested_webcams`). Snapshot URLs (`.jpg` / `/image`) are re-fetched about every 1.5s; ingest `fps` will be low. Prefer `/api/events` over a single live screenshot.

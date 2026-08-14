@@ -31,10 +31,17 @@ class EventStore:
                     classes TEXT NOT NULL,
                     score REAL,
                     thumb_path TEXT,
-                    clip_path TEXT
+                    clip_path TEXT,
+                    summary TEXT
                 )
                 """
             )
+            cols = {
+                row[1]
+                for row in self._conn.execute("PRAGMA table_info(events)").fetchall()
+            }
+            if "summary" not in cols:
+                self._conn.execute("ALTER TABLE events ADD COLUMN summary TEXT")
             self._conn.commit()
 
     def insert(
@@ -56,6 +63,14 @@ class EventStore:
             )
             self._conn.commit()
             return int(cur.lastrowid)
+
+    def update_summary(self, event_id: int, summary: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE events SET summary = ? WHERE id = ?",
+                (summary, event_id),
+            )
+            self._conn.commit()
 
     def list_events(self, limit: int = 50) -> list[dict[str, Any]]:
         with self._lock:

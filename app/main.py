@@ -56,6 +56,7 @@ app.mount("/media", StaticFiles(directory=str(cfg.data_dir)), name="media")
 def health() -> dict:
     payload = pipeline.health()
     payload.update(version_payload())
+    payload["vision"] = cfg.vision.provider if cfg.vision.enabled else "off"
     return payload
 
 
@@ -152,6 +153,7 @@ def _event_json(row: dict) -> dict:
         "score": row.get("score"),
         "thumb_url": f"/media/{thumb}" if thumb else None,
         "clip_url": f"/media/{clip}" if clip else None,
+        "summary": row.get("summary") or "",
     }
 
 
