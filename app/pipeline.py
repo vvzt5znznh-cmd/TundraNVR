@@ -362,7 +362,7 @@ class Pipeline:
             with self._lock:
                 self.status.opened = True
                 self.status.last_error = None
-                self.status.source = str(self.cfg.resolved_source())
+                self.status.source = str(self._active_source)
             log.info("Capture opened: %s", redact_source(self.status.source))
             self.motion.reset()
             self.tracker.reset()
@@ -571,7 +571,9 @@ class Pipeline:
         fusion = self.fusion.snapshot(now) if self.cfg.fusion.enabled else None
         fusion_d = fusion.as_dict() if fusion else {}
 
-        edge_upload = has_motion and (pol.unusual or not pol.confident)
+        edge_upload = has_motion and (
+            pol.unusual or not pol.confident or self._fallback
+        )
         detections: list[Detection] = []
         yolo_ran = False
         tracks: list[Track] = []
