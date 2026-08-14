@@ -3,23 +3,17 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Tundra — Activity</title>
+  <title>Tundra — Events</title>
   <link rel="stylesheet" href="/app.css" />
 </head>
-<body>
-  <header class="top">
-    <strong class="brand">Tundra</strong>
-    <nav>
-      <a href="/">Live</a>
-      <a class="active" href="/events">Activity</a>
-    </nav>
-  </header>
-  <main class="wrap">
+<body data-page="events" data-seat="operator">
+  <header class="top" id="chrome"></header>
+  <main class="console">
     <div class="log-toolbar">
       <h2>Operator</h2>
       <div class="toggle">
         <button type="button" id="allBtn" class="on">All</button>
-        <button type="button" id="alertBtn">Needs you</button>
+        <button type="button" id="alertBtn">Alerts</button>
       </div>
     </div>
     <section class="grid-2">
@@ -27,112 +21,17 @@
       <aside class="player panel">
         <video id="player" controls playsinline></video>
         <p class="lede" id="detail">Select a clip.</p>
-        <ol class="handoff compact" id="detailHandoff"></ol>
+        <ol class="cascade compact" id="detailHandoff"></ol>
         <p id="summary"></p>
         <div class="review">
-          <button type="button" class="btn" id="confirmBtn">Real</button>
-          <button type="button" class="ghost" id="dismissBtn">Fine</button>
+          <button type="button" class="btn" id="confirmBtn">Incident</button>
+          <button type="button" class="ghost" id="dismissBtn">Normal</button>
           <p class="lede" id="reviewMsg"></p>
         </div>
       </aside>
     </section>
   </main>
-  <script>
-    const rowsEl = document.getElementById("rows");
-    let alertsOnly = false;
-    let events = [];
-    let selected = null;
-
-    function esc(value) {
-      return String(value || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-    }
-    function fmt(ts) {
-      const d = new Date(ts);
-      return Number.isNaN(d.getTime()) ? (ts || "") : d.toLocaleString();
-    }
-    function headline(event) {
-      if (event.summary) {
-        const line = event.summary.split(/(?<=[.!?])\s/)[0];
-        return line.length > 110 ? line.slice(0, 108) + "…" : line;
-      }
-      return (event.classes || []).join(", ") || "Motion";
-    }
-    function stopLabel(event) {
-      if (event.operator_status) return event.operator_status;
-      return event.stopped_at || "";
-    }
-
-    function play(event) {
-      selected = event;
-      rowsEl.querySelectorAll(".log-item").forEach((btn) => btn.classList.remove("active"));
-      const row = document.getElementById("evt-" + event.id);
-      if (row) row.classList.add("active");
-      if (event.clip_url) {
-        player.src = event.clip_url;
-        player.play().catch(() => {});
-      }
-      detail.textContent = `${fmt(event.ts_start)} · track ${event.track_id ?? "—"} · dwell ${event.dwell_s ?? "—"}s · ${(event.classes || []).join(", ") || "—"}`;
-      summary.textContent = [
-        event.anomaly ? `Alert: ${event.anomaly_reason}.` : "Not an operator alert.",
-        event.summary || "",
-        event.verifier_provider ? `Verifier: ${event.verifier_provider} (${event.verifier_status || "—"})` : "",
-        event.novelty_score != null ? `Novelty ${Number(event.novelty_score).toFixed(2)} (ranking only).` : "",
-      ].filter(Boolean).join(" ");
-      const steps = (event.handoff && event.handoff.steps) || [];
-      detailHandoff.innerHTML = steps.map((s) =>
-        `<li><span class="step ${esc(s.decision)}"><b>${esc(s.label)}</b> ${esc(s.decision)}</span></li>`
-      ).join("");
-      const done = event.operator_status === "confirmed" || event.operator_status === "dismissed";
-      confirmBtn.disabled = done;
-      dismissBtn.disabled = done;
-      reviewMsg.textContent = done
-        ? (event.operator_status === "dismissed" ? "Folded into Pattern of Life." : "Kept as an incident.")
-        : "Fine teaches Edge. Real does not.";
-    }
-
-    function render() {
-      if (!events.length) {
-        rowsEl.innerHTML = `<p class="empty">${alertsOnly ? "Nothing waiting." : "Nothing yet."}</p>`;
-        return;
-      }
-      rowsEl.innerHTML = events.map((e) => `
-        <button type="button" class="log-item ${e.anomaly ? "alert" : ""}" id="evt-${e.id}">
-          ${e.thumb_url ? `<img class="thumb" src="${e.thumb_url}" alt="" />` : "<span></span>"}
-          <div>
-            <h3>${esc(headline(e))}</h3>
-            <p class="meta">${esc(fmt(e.ts_start))} · ${esc(stopLabel(e))}${e.track_id != null ? " · #" + e.track_id : ""}${e.dwell_s != null ? " · " + e.dwell_s + "s" : ""}</p>
-          </div>
-        </button>
-      `).join("");
-      events.forEach((e) => document.getElementById("evt-" + e.id).addEventListener("click", () => play(e)));
-      play(events[0]);
-    }
-
-    async function loadEvents() {
-      const res = await fetch("/api/events?limit=80" + (alertsOnly ? "&alerts=true" : ""));
-      events = await res.json();
-      render();
-    }
-
-    async function review(action) {
-      if (!selected) return;
-      const res = await fetch("/api/events/" + selected.id + "/review", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.status === 401) { reviewMsg.textContent = "API token required to review."; return; }
-      if (!res.ok) { reviewMsg.textContent = data.detail || "Failed."; return; }
-      events = events.map((e) => (e.id === data.id ? data : e));
-      render();
-    }
-
-    allBtn.addEventListener("click", () => { alertsOnly = false; allBtn.classList.add("on"); alertBtn.classList.remove("on"); loadEvents(); });
-    alertBtn.addEventListener("click", () => { alertsOnly = true; alertBtn.classList.add("on"); allBtn.classList.remove("on"); loadEvents(); });
-    confirmBtn.addEventListener("click", () => review("confirm"));
-    dismissBtn.addEventListener("click", () => review("dismiss"));
-    loadEvents();
-  </script>
+  <script src="/app.js"></script>
+  <script>TundraUI.events();</script>
 </body>
 </html>

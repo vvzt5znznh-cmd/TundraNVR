@@ -190,7 +190,7 @@ def draw_edge_overlay(
             cv2.rectangle(vis, (x1, y1), (x2, y2), (40, 40, 40), 1)
     vis = cv2.addWeighted(overlay, 0.32, vis, 0.68, 0)
     label = "unusual" if unusual else ("motion" if has_motion else "quiet")
-    banner = f"Edge {label}  {score:.2f}  {reason}"
+    banner = f"Raspberry {label}  {score:.2f}  {reason}"
     cv2.putText(
         vis,
         banner[:78],

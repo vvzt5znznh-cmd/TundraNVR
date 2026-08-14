@@ -464,7 +464,7 @@ class Pipeline:
         elif self._yolo_ran:
             node_banner = "Node · unnamed"
         elif self._has_motion:
-            node_banner = "Node · Edge kept this locally"
+            node_banner = "Node · Raspberry kept this locally"
         node = draw_overlay(frame, dets, self._motion_area, self._has_motion, banner=node_banner)
         hub_dets = dets if self._hub_banner else []
         hub_banner = self._hub_banner or "Hub idle — waiting for Node to escalate"
@@ -1046,10 +1046,10 @@ def _handoff_payload(
                 "stage": "node",
                 "label": "Node",
                 "decision": "skipped",
-                "detail": "Edge kept this locally · namer idle",
+                "detail": "Raspberry kept this locally · detector idle",
             }
         )
-        steps.append({"stage": "hub", "label": "Hub", "decision": "skipped", "detail": "Node did not send a packet"})
+        steps.append({"stage": "hub", "label": "Hub", "decision": "skipped", "detail": "Node did not escalate"})
         steps.append({"stage": "operator", "label": "Operator", "decision": "skipped", "detail": ""})
         stopped = "edge"
     else:
@@ -1076,7 +1076,7 @@ def _handoff_payload(
                         "stage": "operator",
                         "label": "Operator",
                         "decision": "needed",
-                        "detail": "confirm or dismiss",
+                        "detail": "Incident or Normal",
                     }
                 )
                 stopped = "operator"

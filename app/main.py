@@ -182,9 +182,9 @@ def events_page() -> FileResponse:
     return FileResponse(web_dir / "events.html")
 
 
-@app.get("/app.css")
-def app_css() -> FileResponse:
-    return FileResponse(web_dir / "app.css", media_type="text/css")
+@app.get("/app.js")
+def app_js() -> FileResponse:
+    return FileResponse(web_dir / "ui.js", media_type="text/javascript")
 
 
 def _event_json(row: dict) -> dict:

@@ -20,7 +20,7 @@ Single Python service. There are no tests or linters configured in this repo bes
 
 ### Run
 - Start the app (dev): `python -m app.main` — `http://0.0.0.0:8000`.
-- Web UI: `/` and `/events`. JSON: `/health`, `/api/events`.
+- Web UI: `/` (Live) and `/events` (Operator). JSON: `/health`, `/api/events`. Dark ops chrome; Incident/Normal on Events.
 
 ### Testing / behavior notes
 - Motion is OpenCV frame difference. YOLO only on Edge trips. Tracks: one track ≤ one event. Dwell is on `/api/events` (`dwell_s`, `track_id`).
