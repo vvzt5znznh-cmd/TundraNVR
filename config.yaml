@@ -1,6 +1,6 @@
 camera:
   # File path, RTSP/HTTP URL, or camera index (0). File sources loop by default.
-  source: data/sample.mp4
+  source: data/samples/city.mp4
   width: 1280
   height: 720
   loop_file: true
@@ -18,11 +18,27 @@ motion:
 detection:
   model: yolov8n.pt
   conf: 0.4
+  # Stock YOLO has no drone class; airplane/bird are the closest.
   classes:
     - person
+    - bicycle
     - car
-    - dog
+    - motorcycle
+    - airplane
+    - bus
+    - train
+    - truck
+    - boat
+    - bird
     - cat
+    - dog
+    - horse
+    - sheep
+    - cow
+    - elephant
+    - bear
+    - zebra
+    - giraffe
   device: cpu
 
 events:

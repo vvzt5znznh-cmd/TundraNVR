@@ -96,6 +96,20 @@
       cursor: pointer;
     }
     button:disabled { opacity: 0.6; cursor: default; }
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .chips button {
+      background: #121418;
+      color: var(--text);
+      border: 1px solid var(--line);
+      font-weight: 500;
+      padding: 6px 10px;
+      font-size: 12px;
+    }
+    .chips button:hover { border-color: var(--accent); }
     .msg { font-size: 13px; color: var(--muted); min-height: 1.2em; }
     .msg.err { color: #ff8b8b; }
     .msg.ok { color: var(--ok); }
@@ -125,11 +139,11 @@
     </div>
     <form class="settings" id="settings">
       <h2>Source and model</h2>
-      <p>File path, webcam index (<code>0</code>), or RTSP/HTTP URL. A new model name is downloaded on first use.</p>
+      <p>File path, webcam index (<code>0</code>), or RTSP/HTTP URL. Pick a sample clip or type your own. A new model name is downloaded on first use. Stock YOLO has no drone class.</p>
       <div class="fields">
         <label>Video source
-          <input id="sourceInput" name="source" autocomplete="off" spellcheck="false"
-            placeholder="data/sample.mp4" />
+          <input id="sourceInput" name="source" list="sourceOptions" autocomplete="off" spellcheck="false"
+            placeholder="data/samples/city.mp4" />
         </label>
         <label>YOLO model
           <input id="modelInput" name="model" list="modelOptions" autocomplete="off" spellcheck="false"
@@ -137,7 +151,9 @@
         </label>
         <button type="submit" id="apply">Apply</button>
       </div>
+      <datalist id="sourceOptions"></datalist>
       <datalist id="modelOptions"></datalist>
+      <div class="chips" id="sourceChips"></div>
       <div class="msg" id="settingsMsg"></div>
     </form>
   </main>
@@ -169,6 +185,8 @@
     setInterval(refreshHealth, 1500);
 
     const sourceInput = document.getElementById("sourceInput");
+    const sourceOptions = document.getElementById("sourceOptions");
+    const sourceChips = document.getElementById("sourceChips");
     const modelInput = document.getElementById("modelInput");
     const modelOptions = document.getElementById("modelOptions");
     const applyBtn = document.getElementById("apply");
@@ -188,6 +206,18 @@
       modelOptions.innerHTML = (data.suggested_models || [])
         .map((name) => `<option value="${name}"></option>`)
         .join("");
+      const sources = data.suggested_sources || [];
+      sourceOptions.innerHTML = sources
+        .map((s) => `<option value="${s.path}"></option>`)
+        .join("");
+      sourceChips.innerHTML = sources
+        .map((s) => `<button type="button" data-path="${s.path}">${s.label}</button>`)
+        .join("");
+      sourceChips.querySelectorAll("button").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          sourceInput.value = btn.getAttribute("data-path") || "";
+        });
+      });
     }
 
     document.getElementById("settings").addEventListener("submit", async (ev) => {

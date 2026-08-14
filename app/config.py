@@ -19,6 +19,39 @@ SUGGESTED_MODELS = [
     "yolo11s.pt",
 ]
 
+SAMPLE_LABELS = {
+    "city.mp4": "City street — people, buses, cars",
+    "street.mp4": "Parking lot — people, bicycles, cars",
+    "cars.mp4": "Overhead cars",
+    "wildlife.mp4": "Deer on a road",
+    "livestock.mp4": "Cattle on a road",
+    "aircraft.mp4": "Aircraft at a runway",
+    "drone.mp4": "Quadcopter",
+    "people.mp4": "Indoor pedestrians",
+}
+
+OUTDOOR_CLASSES = [
+    "person",
+    "bicycle",
+    "car",
+    "motorcycle",
+    "airplane",
+    "bus",
+    "train",
+    "truck",
+    "boat",
+    "bird",
+    "cat",
+    "dog",
+    "horse",
+    "sheep",
+    "cow",
+    "elephant",
+    "bear",
+    "zebra",
+    "giraffe",
+]
+
 
 class SettingsError(ValueError):
     """Invalid live-settings payload."""
@@ -35,7 +68,7 @@ def _as_source(value: Any) -> str | int:
 
 @dataclass
 class CameraConfig:
-    source: str | int = "data/sample.mp4"
+    source: str | int = "data/samples/city.mp4"
     width: int = 1280
     height: int = 720
     loop_file: bool = True
@@ -59,7 +92,7 @@ class MotionConfig:
 class DetectionConfig:
     model: str = "yolov8n.pt"
     conf: float = 0.4
-    classes: list[str] = field(default_factory=lambda: ["person", "car", "dog", "cat"])
+    classes: list[str] = field(default_factory=lambda: list(OUTDOOR_CLASSES))
     device: str = "cpu"
 
 
@@ -137,7 +170,7 @@ def load_config(path: Path | None = None) -> AppConfig:
 
     cfg = AppConfig(
         camera=CameraConfig(
-            source=_as_source(camera_raw.get("source", "data/sample.mp4")),
+            source=_as_source(camera_raw.get("source", "data/samples/city.mp4")),
             width=int(camera_raw.get("width", 1280)),
             height=int(camera_raw.get("height", 720)),
             loop_file=bool(camera_raw.get("loop_file", True)),
@@ -155,7 +188,7 @@ def load_config(path: Path | None = None) -> AppConfig:
         detection=DetectionConfig(
             model=str(detection_raw.get("model", "yolov8n.pt")),
             conf=float(detection_raw.get("conf", 0.4)),
-            classes=list(detection_raw.get("classes") or ["person", "car", "dog", "cat"]),
+            classes=list(detection_raw.get("classes") or OUTDOOR_CLASSES),
             device=str(detection_raw.get("device", "cpu")),
         ),
         events=EventsConfig(
@@ -221,9 +254,20 @@ def parse_settings_update(source: str, model: str) -> tuple[str | int, str]:
     return parsed, model_text
 
 
+def listed_samples() -> list[dict[str, str]]:
+    folder = ROOT / "data" / "samples"
+    items: list[dict[str, str]] = []
+    for name, label in SAMPLE_LABELS.items():
+        path = folder / name
+        if path.is_file() and path.stat().st_size > 10_000:
+            items.append({"path": f"data/samples/{name}", "label": label})
+    return items
+
+
 def public_settings(cfg: AppConfig) -> dict[str, Any]:
     return {
         "source": str(cfg.camera.source),
         "model": cfg.detection.model,
         "suggested_models": SUGGESTED_MODELS,
+        "suggested_sources": listed_samples(),
     }
