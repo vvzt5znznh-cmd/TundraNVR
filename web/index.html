@@ -54,6 +54,45 @@
     }
     .dot { color: var(--ok); }
     .dets { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .settings {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      display: grid;
+      gap: 12px;
+    }
+    .settings h2 { margin: 0; font-size: 14px; font-weight: 600; }
+    .settings p { margin: 0; color: var(--muted); font-size: 13px; }
+    .fields {
+      display: grid;
+      grid-template-columns: 1fr 1fr auto;
+      gap: 12px;
+      align-items: end;
+    }
+    @media (max-width: 800px) { .fields { grid-template-columns: 1fr; } }
+    label { display: grid; gap: 6px; font-size: 12px; color: var(--muted); }
+    input {
+      background: #121418;
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 8px 10px;
+      font: inherit;
+    }
+    button {
+      background: var(--accent);
+      color: #101318;
+      border: 0;
+      border-radius: 6px;
+      padding: 9px 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.6; cursor: default; }
+    .msg { font-size: 13px; color: var(--muted); min-height: 1.2em; }
+    .msg.err { color: #ff8b8b; }
+    .msg.ok { color: var(--ok); }
   </style>
 </head>
 <body>
@@ -75,6 +114,23 @@
       <span id="motion"></span>
       <span class="dets" id="dets"></span>
     </div>
+    <form class="settings" id="settings">
+      <h2>Source and model</h2>
+      <p>File path, webcam index (<code>0</code>), or RTSP/HTTP URL. A new model name is downloaded on first use.</p>
+      <div class="fields">
+        <label>Video source
+          <input id="sourceInput" name="source" autocomplete="off" spellcheck="false"
+            placeholder="data/sample.mp4" />
+        </label>
+        <label>YOLO model
+          <input id="modelInput" name="model" list="modelOptions" autocomplete="off" spellcheck="false"
+            placeholder="yolov8n.pt" />
+        </label>
+        <button type="submit" id="apply">Apply</button>
+      </div>
+      <datalist id="modelOptions"></datalist>
+      <div class="msg" id="settingsMsg"></div>
+    </form>
   </main>
   <script>
     async function refreshHealth() {
@@ -99,6 +155,59 @@
     }
     refreshHealth();
     setInterval(refreshHealth, 1500);
+
+    const sourceInput = document.getElementById("sourceInput");
+    const modelInput = document.getElementById("modelInput");
+    const modelOptions = document.getElementById("modelOptions");
+    const applyBtn = document.getElementById("apply");
+    const settingsMsg = document.getElementById("settingsMsg");
+
+    function setMsg(text, kind) {
+      settingsMsg.textContent = text;
+      settingsMsg.className = "msg" + (kind ? " " + kind : "");
+    }
+
+    async function loadSettings() {
+      const res = await fetch("/api/settings");
+      if (!res.ok) throw new Error("settings failed");
+      const data = await res.json();
+      sourceInput.value = data.source || "";
+      modelInput.value = data.model || "";
+      modelOptions.innerHTML = (data.suggested_models || [])
+        .map((name) => `<option value="${name}"></option>`)
+        .join("");
+    }
+
+    document.getElementById("settings").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      applyBtn.disabled = true;
+      setMsg("Applying… live view will pause while the pipeline restarts.");
+      try {
+        const res = await fetch("/api/settings", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            source: sourceInput.value,
+            model: modelInput.value,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.detail || "could not apply settings");
+        }
+        sourceInput.value = data.source || sourceInput.value;
+        modelInput.value = data.model || modelInput.value;
+        document.getElementById("stream").src = "/api/stream.mjpg?" + Date.now();
+        setMsg("Applied. A new model may take a minute to download.", "ok");
+        refreshHealth();
+      } catch (err) {
+        setMsg(err.message || "could not apply settings", "err");
+      } finally {
+        applyBtn.disabled = false;
+      }
+    });
+
+    loadSettings().catch(() => setMsg("Could not load current settings.", "err"));
   </script>
 </body>
 </html>

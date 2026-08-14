@@ -15,6 +15,7 @@ data/clips/*
 !data/clips/.gitkeep
 data/thumbs/*
 !data/thumbs/.gitkeep
+data/settings.json
 
 # OS / editor
 .DS_Store
