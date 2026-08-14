@@ -365,6 +365,8 @@ class Pipeline:
             with self._lock:
                 if now > self._overlay_until:
                     self.status.last_detections = []
+                    self.status.last_anomaly = ""
+                    self.status.last_scene = ""
 
     def _on_match(self, frame: np.ndarray, detections: list[Detection], now: float) -> None:
         classes = {d.cls for d in detections}

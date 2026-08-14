@@ -58,7 +58,7 @@ class ObjectDetector:
         classes: list[str] | None = None,
         device: str = "cpu",
         drone_model: str = "",
-        drone_conf: float = 0.45,
+        drone_conf: float = 0.55,
     ) -> None:
         self.model_name = model
         self.conf = conf

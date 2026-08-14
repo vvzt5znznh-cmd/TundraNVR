@@ -20,7 +20,7 @@ detection:
   conf: 0.4
   # Second model (YOLOv8n) trained to spot quadcopters and fixed-wing UAVs.
   drone_model: drone-yolo.pt
-  drone_conf: 0.45
+  drone_conf: 0.55
   classes:
     - person
     - bicycle

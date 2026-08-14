@@ -149,12 +149,16 @@
         const sub = document.getElementById("sceneSub");
         const card = document.getElementById("sceneCard");
         const alertPill = document.getElementById("alertPill");
-        if (data.last_anomaly) {
+        const dets = data.last_detections || [];
+        const liveAlert = data.last_anomaly && dets.some((d) => d.cls === "drone" || d.cls === "airplane")
+          ? data.last_anomaly
+          : "";
+        if (liveAlert) {
           card.classList.add("alert");
-          scene.textContent = data.last_scene || data.last_anomaly;
-          sub.textContent = data.last_anomaly;
+          scene.textContent = data.last_scene || liveAlert;
+          sub.textContent = liveAlert;
           alertPill.hidden = false;
-          alertPill.textContent = data.last_anomaly;
+          alertPill.textContent = liveAlert;
         } else {
           card.classList.remove("alert");
           scene.textContent = data.last_scene || (data.last_motion ? "Motion, nothing named yet." : "Quiet.");
@@ -162,7 +166,6 @@
           alertPill.hidden = true;
         }
         const objs = document.getElementById("objects");
-        const dets = data.last_detections || [];
         objs.innerHTML = dets.length
           ? dets.map((d) => `<span>${d.cls}</span>`).join("")
           : "";

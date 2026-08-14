@@ -145,7 +145,7 @@ class DetectionConfig:
     classes: list[str] = field(default_factory=lambda: list(BUILDING_CLASSES))
     device: str = "cpu"
     drone_model: str = "drone-yolo.pt"
-    drone_conf: float = 0.45
+    drone_conf: float = 0.55
 
 
 @dataclass
@@ -288,7 +288,7 @@ def load_config(path: Path | None = None) -> AppConfig:
             classes=list(detection_raw.get("classes") or BUILDING_CLASSES),
             device=str(detection_raw.get("device", "cpu")),
             drone_model=str(detection_raw.get("drone_model", "drone-yolo.pt")),
-            drone_conf=float(detection_raw.get("drone_conf", 0.45)),
+            drone_conf=float(detection_raw.get("drone_conf", 0.55)),
         ),
         events=EventsConfig(
             pre_seconds=float(events_raw.get("pre_seconds", 2)),
