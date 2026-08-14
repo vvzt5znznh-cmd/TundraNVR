@@ -31,11 +31,32 @@ from app.zones import Zone, ZoneMap
 log = logging.getLogger(__name__)
 
 
-def _encode_jpeg(frame: np.ndarray, quality: int) -> bytes:
-    ok, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
-    if not ok:
-        return b""
-    return buf.tobytes()
+def _placeholder_jpeg(width: int, height: int, quality: int) -> bytes:
+    w, h = max(width or 1280, 320), max(height or 720, 180)
+    frame = np.zeros((h, w, 3), dtype=np.uint8)
+    frame[:] = (18, 16, 14)
+    cv2.putText(
+        frame,
+        "No signal",
+        (24, h // 2),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        1.1,
+        (200, 200, 200),
+        2,
+        cv2.LINE_AA,
+    )
+    return _encode_jpeg(frame, quality)
+
+
+def bundled_sample(root: Path) -> Path | None:
+    names = ("entrance.mp4", "package.mp4", "drone.mp4", "sample.mp4")
+    dirs = (root / "data" / "samples", root / "data")
+    for folder in dirs:
+        for name in names:
+            path = folder / name
+            if path.is_file() and path.stat().st_size > 10_000:
+                return path
+    return None
 
 
 @dataclass
@@ -149,6 +170,16 @@ class Pipeline:
         self._jpeg_edge = b""
         self._jpeg_node = b""
         self._jpeg_hub = b""
+        self._active_source: str | int = cfg.resolved_source()
+        self._file_loop = bool(cfg.camera.loop_file)
+        self._fallback = False
+        placeholder = _placeholder_jpeg(
+            cfg.camera.width, cfg.camera.height, cfg.pipeline.jpeg_quality
+        )
+        self._latest_jpeg = placeholder
+        self._jpeg_edge = placeholder
+        self._jpeg_node = placeholder
+        self._jpeg_hub = placeholder
         self._motion_grid = np.zeros((8, 8), dtype=np.float32)
         self._usual_grid = np.zeros((8, 8), dtype=np.float32)
         self._last_pol_score = 0.0
@@ -259,6 +290,7 @@ class Pipeline:
                     edge_active=self.status.last_motion,
                 ),
                 "auth_required": bool(self.cfg.server.api_token),
+                "fallback": self._fallback,
             }
 
     def ingest_frame(self, frame: np.ndarray, now: float | None = None) -> None:
@@ -342,14 +374,56 @@ class Pipeline:
 
     def _open_capture(self) -> cv2.VideoCapture | None:
         source = self.cfg.resolved_source()
+        cap = self._try_open(source)
+        if cap is not None:
+            self._active_source = source
+            self._file_loop = self._source_is_file(source) and bool(self.cfg.camera.loop_file)
+            self._fallback = False
+            with self._lock:
+                self.status.source = str(source)
+            return cap
+        sample = bundled_sample(self.cfg.root)
+        if sample is not None:
+            cap = self._try_open(str(sample))
+            if cap is not None:
+                log.warning(
+                    "Camera %s unavailable; looping sample %s",
+                    redact_source(source),
+                    sample.name,
+                )
+                self._active_source = str(sample)
+                self._file_loop = True
+                self._fallback = True
+                with self._lock:
+                    self.status.source = str(sample)
+                return cap
         with self._lock:
             self.status.source = str(source)
+        return None
+
+    def _try_open(self, source: str | int) -> cv2.VideoCapture | None:
         cap = cv2.VideoCapture(source)
-        if self.cfg.camera.width:
+        if self.cfg.camera.width and isinstance(source, int):
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.cfg.camera.width)
-        if self.cfg.camera.height:
+        if self.cfg.camera.height and isinstance(source, int):
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.cfg.camera.height)
+        if not cap.isOpened():
+            cap.release()
+            return None
+        ok, frame = cap.read()
+        if not ok or frame is None:
+            cap.release()
+            return None
+        if self._source_is_file(source):
+            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
         return cap
+
+    def _source_is_file(self, source: str | int) -> bool:
+        if isinstance(source, int):
+            return False
+        if "://" in str(source):
+            return False
+        return Path(source).is_file()
 
     def _ingest_loop(self, cap: cv2.VideoCapture) -> None:
         detect_interval = 1.0 / max(self.cfg.pipeline.detect_fps, 0.1)
@@ -371,7 +445,7 @@ class Pipeline:
             ok, frame = cap.read()
             if not ok or frame is None:
                 consecutive_fail += 1
-                if self._is_file_source() and self.cfg.camera.loop_file:
+                if self._is_file_source() and self._file_loop:
                     loop_fails += 1
                     if loop_fails > 3 or not cap.set(cv2.CAP_PROP_POS_FRAMES, 0):
                         return
@@ -425,12 +499,7 @@ class Pipeline:
                     next_frame_at = time.monotonic()
 
     def _is_file_source(self) -> bool:
-        source = self.cfg.resolved_source()
-        if isinstance(source, int):
-            return False
-        if "://" in str(source):
-            return False
-        return Path(source).is_file()
+        return self._source_is_file(self._active_source)
 
     def _resize(self, frame: np.ndarray) -> np.ndarray:
         h, w = frame.shape[:2]

@@ -43,6 +43,9 @@
     details: "Details",
     live: "Live",
     waiting: "Waiting",
+    sampleLoop: "Sample",
+    noSignal: "No camera on this host.",
+    fallbackNote: "No camera on this host — looping a sample clip.",
     error: "Error",
     connecting: "Connecting",
     quiet: "Quiet",
@@ -278,13 +281,18 @@
         const opened = Boolean(data.opened);
         const status = document.getElementById("status");
         status.className = "pill " + (opened ? "live" : "wait");
-        status.textContent = opened ? COPY.live : COPY.waiting;
+        status.textContent = opened ? (data.fallback ? COPY.sampleLoop : COPY.live) : COPY.waiting;
+        const nosignal = document.getElementById("nosignal");
+        if (nosignal) {
+          nosignal.hidden = opened;
+          nosignal.textContent = COPY.noSignal;
+        }
         const dot = document.getElementById("signalDot");
         const signal = document.getElementById("signalText");
         if (dot) {
           dot.className = "dot " + (opened ? "live" : "wait");
         }
-        if (signal) signal.textContent = opened ? COPY.live : COPY.waiting;
+        if (signal) signal.textContent = opened ? (data.fallback ? COPY.fallbackNote : COPY.live) : COPY.waiting;
         const vis = document.getElementById("visionText");
         if (vis) {
           const name = data.vision || "local";

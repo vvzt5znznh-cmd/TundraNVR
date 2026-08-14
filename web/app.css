@@ -166,6 +166,19 @@ button, input { font: inherit; color: inherit; }
   object-fit: contain;
   background: #000;
 }
+.nosignal {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  color: var(--muted);
+  font-size: 16px;
+  font-weight: 650;
+  background: rgba(5, 6, 7, 0.55);
+  pointer-events: none;
+}
+.nosignal[hidden] { display: none; }
 .hud {
   display: flex;
   flex-wrap: wrap;
