@@ -286,7 +286,10 @@
         }
         if (signal) signal.textContent = opened ? COPY.live : COPY.waiting;
         const vis = document.getElementById("visionText");
-        if (vis) vis.textContent = (data.vision || "local") + (data.allow_cloud ? "" : " · local");
+        if (vis) {
+          const name = data.vision || "local";
+          vis.textContent = data.allow_cloud ? name + " · cloud" : name;
+        }
         const ver = document.getElementById("versionText");
         if (ver) ver.textContent = data.display || data.version || "";
         const handoff = data.handoff || {};
@@ -399,7 +402,10 @@
         if (dot) dot.className = "dot " + (opened ? "live" : "wait");
         if (signal) signal.textContent = opened ? COPY.live : COPY.waiting;
         const vis = document.getElementById("visionText");
-        if (vis) vis.textContent = (data.vision || "local") + (data.allow_cloud ? "" : " · local");
+        if (vis) {
+          const name = data.vision || "local";
+          vis.textContent = data.allow_cloud ? name + " · cloud" : name;
+        }
         const ver = document.getElementById("versionText");
         if (ver) ver.textContent = data.display || data.version || "";
       })
