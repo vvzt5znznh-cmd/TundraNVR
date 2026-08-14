@@ -62,6 +62,12 @@ escalation:
   mode: recall
   pol_score_min: 0.7
 
+# Roadmap model at each seat. `running` in /health is what this process loads.
+targets:
+  edge: OpenCV + Pattern of Life (no neural net)
+  node: RF-DETR
+  hub: Moondream 3
+
 vision:
   enabled: true
   provider: local

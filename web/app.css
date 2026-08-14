@@ -86,7 +86,34 @@ nav a.active { color: var(--pine); background: #dce8e2; }
   margin: 0 0 8px;
 }
 h2 { margin: 0 0 6px; font-size: 20px; letter-spacing: -0.03em; }
-.lede { margin: 0; color: var(--muted); font-size: 14px; }
+.models {
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+.models.gap { color: #9a3412; }
+.model-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  margin: 0 0 16px;
+}
+.model-table th, .model-table td {
+  text-align: left;
+  padding: 6px 8px 6px 0;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+.model-table thead th {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.model-table tbody th { font-weight: 700; }
+.model-table td.gap { color: #9a3412; }
+.model-table tr.current th { color: var(--pine); }
 
 .handoff {
   list-style: none;

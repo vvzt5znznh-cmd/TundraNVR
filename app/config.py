@@ -178,6 +178,15 @@ class EscalationConfig:
 
 
 @dataclass
+class TargetModels:
+    """Roadmap model at each seat vs what this process actually loads."""
+
+    edge: str = "OpenCV + Pattern of Life (no neural net)"
+    node: str = "RF-DETR"
+    hub: str = "Moondream 3"
+
+
+@dataclass
 class ZoneConfig:
     name: str
     polygon: list[list[float]]
@@ -198,6 +207,7 @@ class AppConfig:
     mqtt: MqttSettings
     embed: EmbedConfig
     escalation: EscalationConfig
+    targets: TargetModels
     zones: list[ZoneConfig] = field(default_factory=list)
     root: Path = ROOT
 
@@ -280,6 +290,7 @@ def load_config(path: Path | None = None) -> AppConfig:
     mqtt_raw = raw.get("mqtt") or {}
     embed_raw = raw.get("embed") or {}
     escalation_raw = raw.get("escalation") or {}
+    targets_raw = raw.get("targets") or {}
 
     provider = str(vision_raw.get("provider", "local")).strip().lower()
     if provider in {"auto", "none", "false"}:
@@ -370,6 +381,11 @@ def load_config(path: Path | None = None) -> AppConfig:
             mode=_escalation_mode(escalation_raw.get("mode")),
             pol_score_min=float(escalation_raw.get("pol_score_min", 0.7)),
         ),
+        targets=TargetModels(
+            edge=str(targets_raw.get("edge") or TargetModels.edge),
+            node=str(targets_raw.get("node") or TargetModels.node),
+            hub=str(targets_raw.get("hub") or TargetModels.hub),
+        ),
         zones=_zones(raw.get("zones") or []),
         root=ROOT,
     )
@@ -437,4 +453,9 @@ def public_settings(cfg: AppConfig) -> dict[str, Any]:
         "allow_cloud": bool(cfg.vision.allow_cloud),
         "auth_required": bool(cfg.server.api_token),
         "escalation": cfg.escalation.mode,
+        "targets": {
+            "edge": cfg.targets.edge,
+            "node": cfg.targets.node,
+            "hub": cfg.targets.hub,
+        },
     }

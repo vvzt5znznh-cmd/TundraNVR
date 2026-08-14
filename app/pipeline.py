@@ -22,6 +22,7 @@ from app.mqtt_bus import MqttBus, MqttConfig
 from app.pol import PatternOfLife, absorb_into_file
 from app.record import ClipWriter, NullWriter, cleanup_old_events, save_thumb
 from app.security import redact_source
+from app.tiers import models_payload
 from app.track import ByteTracker, Track, unattended_bags
 from app.verify import verify_event
 from app.vision import effective_provider, fallback_summary
@@ -218,6 +219,7 @@ class Pipeline:
             hub_h = self.escalation_counts["hub_handoffs"]
             hub_a = self.escalation_counts["hub_alerts"]
             confirms = self.escalation_counts["operator_confirms"]
+            hub_ran = bool((self.status.last_handoff.get("hub") or {}).get("ran"))
             return {
                 "status": "ok" if self.status.running else "stopped",
                 "source": redact_source(self.status.source),
@@ -249,6 +251,13 @@ class Pipeline:
                     "hub_per_node": round(hub_h / node, 3) if node else 0.0,
                     "alerts_per_hub": round(hub_a / hub_h, 3) if hub_h else 0.0,
                 },
+                "models": models_payload(
+                    self.cfg,
+                    provider=self.status.verifier_provider or effective_provider(self.cfg.vision),
+                    yolo_ran=self.status.yolo_ran,
+                    hub_ran=hub_ran,
+                    edge_active=self.status.last_motion,
+                ),
                 "auth_required": bool(self.cfg.server.api_token),
             }
 

@@ -18,7 +18,7 @@ pip install -r requirements.txt
 python -m app.main
 ```
 
-Set `camera.source` to index `0` or an RTSP URL. Activity is confirm / dismiss — dismiss trains Pattern of Life.
+Set `camera.source` to index `0` or an RTSP URL (Details on the live page). Activity is confirm / dismiss — dismiss trains Pattern of Life.
 
 Optional mutating-API token: `server.api_token` or `TUNDRANVR_API_TOKEN` (Bearer or `X-API-Token`) on `PUT /api/settings` and event review. Live MJPEG stays open.
 
