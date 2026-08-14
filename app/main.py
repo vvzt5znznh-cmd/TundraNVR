@@ -142,6 +142,11 @@ def events_page() -> FileResponse:
     return FileResponse(web_dir / "events.html")
 
 
+@app.get("/app.css")
+def app_css() -> FileResponse:
+    return FileResponse(web_dir / "app.css", media_type="text/css")
+
+
 def _event_json(row: dict) -> dict:
     thumb = row.get("thumb_path")
     clip = row.get("clip_path")

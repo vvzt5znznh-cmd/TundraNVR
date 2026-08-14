@@ -20,7 +20,7 @@ Single Python service. There are no tests or linters configured in this repo.
 
 ### Run
 - Start the app (dev): `python -m app.main` — serves on `http://0.0.0.0:8000` (`config.yaml` → `server`). There is no separate dev/prod command; this is the dev run.
-- Web UI: `/` (live MJPEG view) and `/events` (history). JSON/health: `/health`, `/api/events`, latest frame at `/api/frame.jpg`, event media under `/media/...`.
+- Web UI: `/` (Monitor) and `/events` (Activity). Shared stylesheet at `/app.css`. JSON/health: `/health`, `/api/events`, latest frame at `/api/frame.jpg`, event media under `/media/...`.
 
 ### Testing / behavior notes
 - The bundled sample clips loop, so `/health` can report a high ingest `fps` for file sources — that is expected, not a bug.

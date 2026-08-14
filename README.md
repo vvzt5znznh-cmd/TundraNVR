@@ -50,7 +50,7 @@ Default source is `data/samples/entrance.mp4` (CAVIAR building door). The live p
 python -m app.main
 ```
 
-Then open http://127.0.0.1:8000 — live view — and http://127.0.0.1:8000/events for the log. The header shows the app version.
+Then open http://127.0.0.1:8000 — Monitor — and http://127.0.0.1:8000/events for Activity. Detector choices are explained on the Monitor page.
 
 | Route | Role |
 | --- | --- |

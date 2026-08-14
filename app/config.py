@@ -16,7 +16,41 @@ SUGGESTED_MODELS = [
     "yolov8s.pt",
     "yolov8m.pt",
     "yolo11n.pt",
-    "yolo11s.pt",
+]
+
+DETECTOR_MODELS = [
+    {
+        "id": "yolov8n.pt",
+        "name": "Fast",
+        "family": "YOLOv8 Nano",
+        "blurb": "People, cars, and bags at a doorway. Built for a laptop CPU and a live view.",
+        "choose_when": "Default. One building camera, you want it snappy.",
+        "recommended": True,
+    },
+    {
+        "id": "yolov8s.pt",
+        "name": "Balanced",
+        "family": "YOLOv8 Small",
+        "blurb": "Better at smaller or farther objects — a person down the corridor, a bag on the floor.",
+        "choose_when": "Fast is missing things and the machine is not struggling.",
+        "recommended": False,
+    },
+    {
+        "id": "yolov8m.pt",
+        "name": "Accurate",
+        "family": "YOLOv8 Medium",
+        "blurb": "Fewer misses on busy or overlapping frames. Boxes are a bit cleaner.",
+        "choose_when": "Catching matters more than a smooth live view. Slow on CPU.",
+        "recommended": False,
+    },
+    {
+        "id": "yolo11n.pt",
+        "name": "Newer fast",
+        "family": "YOLO11 Nano",
+        "blurb": "Same job as Fast, newer weights. Often a little sharper for the same speed class.",
+        "choose_when": "You already like Fast and want the newer nano.",
+        "recommended": False,
+    },
 ]
 
 SAMPLE_LABELS = {
@@ -338,21 +372,57 @@ def listed_samples() -> list[dict[str, str]]:
     for name, label in SAMPLE_LABELS.items():
         path = folder / name
         if path.is_file() and path.stat().st_size > 10_000:
-            items.append({"path": f"data/samples/{name}", "label": label})
+            title, _, detail = label.partition(" — ")
+            items.append(
+                {
+                    "path": f"data/samples/{name}",
+                    "label": label,
+                    "title": title,
+                    "detail": detail,
+                }
+            )
     return items
 
 
 def public_settings(cfg: AppConfig) -> dict[str, Any]:
+    vision_provider = cfg.vision.provider if cfg.vision.enabled else "off"
+    if vision_provider == "auto":
+        vision_blurb = (
+            "Writes the log line. Tries a local caption model, then OpenAI if a key is set, "
+            "otherwise a sentence from the detector labels."
+        )
+    elif vision_provider == "ollama":
+        vision_blurb = "Local caption model (Ollama) describes the still after each event."
+    elif vision_provider == "openai":
+        vision_blurb = "OpenAI vision describes the still after each event."
+    else:
+        vision_blurb = "Scene notes use the detector labels only — no extra caption model."
     return {
         "source": str(cfg.camera.source),
         "model": cfg.detection.model,
         "suggested_models": SUGGESTED_MODELS,
+        "detectors": DETECTOR_MODELS,
         "suggested_sources": listed_samples(),
         "suggested_webcams": PUBLIC_WEBCAMS,
         "vision": {
             "enabled": cfg.vision.enabled,
-            "provider": cfg.vision.provider,
+            "provider": vision_provider,
         },
+        "stack": [
+            {
+                "name": "Drone finder",
+                "status": "always on",
+                "blurb": (
+                    "Always on next to the detector. Stock YOLO has no drone class; "
+                    "this extra model looks for quadcopters and winged UAVs."
+                ),
+            },
+            {
+                "name": "Scene notes",
+                "status": vision_provider,
+                "blurb": vision_blurb,
+            },
+        ],
         "monitoring": {
             "expected_classes": cfg.monitoring.expected_classes,
             "alert_classes": cfg.monitoring.alert_classes,

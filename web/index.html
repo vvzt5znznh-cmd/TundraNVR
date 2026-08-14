@@ -3,285 +3,235 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>TundraNVR — Live</title>
-  <style>
-    :root {
-      --bg: #121418;
-      --panel: #1c2027;
-      --line: #2b313c;
-      --text: #e8eaed;
-      --muted: #9aa3b2;
-      --accent: #7eb8ff;
-      --ok: #6fdd8b;
-      --alert: #ff8b8b;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-    }
-    header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 14px 20px;
-      border-bottom: 1px solid var(--line);
-      background: var(--panel);
-    }
-    .brand { display: flex; align-items: baseline; gap: 10px; }
-    header h1 { font-size: 16px; margin: 0; letter-spacing: 0.04em; }
-    #version {
-      color: var(--muted);
-      font-size: 12px;
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    }
-    nav a {
-      color: var(--accent);
-      text-decoration: none;
-      margin-left: 16px;
-      font-size: 14px;
-    }
-    main { padding: 20px; display: grid; gap: 16px; max-width: 1100px; margin: 0 auto; }
-    .live {
-      background: #000;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      overflow: hidden;
-      min-height: 240px;
-    }
-    .live img { width: 100%; display: block; background: #000; }
-    .meta {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 12px 20px;
-      color: var(--muted);
-      font-size: 13px;
-    }
-    .dot { color: var(--ok); }
-    .dets { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-    .settings {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 16px;
-      display: grid;
-      gap: 12px;
-    }
-    .settings h2 { margin: 0; font-size: 14px; font-weight: 600; }
-    .settings p { margin: 0; color: var(--muted); font-size: 13px; }
-    .fields {
-      display: grid;
-      grid-template-columns: 1fr 1fr auto;
-      gap: 12px;
-      align-items: end;
-    }
-    @media (max-width: 800px) { .fields { grid-template-columns: 1fr; } }
-    label { display: grid; gap: 6px; font-size: 12px; color: var(--muted); }
-    input {
-      background: #121418;
-      color: var(--text);
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      padding: 8px 10px;
-      font: inherit;
-    }
-    button {
-      background: var(--accent);
-      color: #101318;
-      border: 0;
-      border-radius: 6px;
-      padding: 9px 14px;
-      font-weight: 600;
-      cursor: pointer;
-    }
-    button:disabled { opacity: 0.6; cursor: default; }
-    .chips {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-    }
-    .chips button {
-      background: #121418;
-      color: var(--text);
-      border: 1px solid var(--line);
-      font-weight: 500;
-      padding: 6px 10px;
-      font-size: 12px;
-    }
-    .chips button:hover { border-color: var(--accent); }
-    .hint { margin: 0; color: var(--muted); font-size: 12px; }
-    .msg { font-size: 13px; color: var(--muted); min-height: 1.2em; }
-    .msg.err { color: #ff8b8b; }
-    .msg.ok { color: var(--ok); }
-  </style>
+  <title>Tundra — Monitor</title>
+  <link rel="stylesheet" href="/app.css" />
 </head>
 <body>
-  <header>
+  <header class="top">
     <div class="brand">
-      <h1>TundraNVR</h1>
+      <strong>Tundra</strong>
+      <span class="tag">Building camera</span>
       <span id="version"></span>
     </div>
     <nav>
-      <a href="/">Live</a>
-      <a href="/events">Events</a>
+      <a class="active" href="/">Monitor</a>
+      <a href="/events">Activity</a>
     </nav>
   </header>
-  <main>
-    <div class="live">
+  <main class="wrap">
+    <section class="stage">
       <img id="stream" alt="Live camera" src="/api/stream.mjpg" />
-    </div>
-    <div class="meta">
-      <span id="status"><span class="dot">●</span> connecting</span>
-      <span id="source"></span>
-      <span id="fps"></span>
-      <span id="motion"></span>
-      <span class="dets" id="dets"></span>
-      <span id="scene"></span>
-      <span id="alert"></span>
-    </div>
-    <form class="settings" id="settings">
-      <h2>Source and model</h2>
-      <p>Fixed CCTV, file path, webcam index (<code>0</code>), or RTSP/HTTP URL. Samples are static building cameras. People and vehicles use YOLO; drones use a second UAV model.</p>
-      <div class="fields">
-        <label>Video source
-          <input id="sourceInput" name="source" list="sourceOptions" autocomplete="off" spellcheck="false"
-            placeholder="data/samples/entrance.mp4" />
-        </label>
-        <label>YOLO model
-          <input id="modelInput" name="model" list="modelOptions" autocomplete="off" spellcheck="false"
-            placeholder="yolov8n.pt" />
-        </label>
-        <button type="submit" id="apply">Apply</button>
+      <div class="hud">
+        <span class="pill wait" id="status"><span class="dot">●</span> Connecting</span>
+        <span class="pill" id="cameraName">Camera</span>
+        <span class="pill alert" id="alertPill" hidden></span>
       </div>
-      <datalist id="sourceOptions"></datalist>
-      <datalist id="modelOptions"></datalist>
-      <div class="chips" id="sourceChips"></div>
-      <p class="hint">Optional public street stills (NYC DOT) — not a building camera.</p>
-      <div class="chips" id="webcamChips"></div>
-      <p class="hint" id="visionHint"></p>
-      <div class="msg" id="settingsMsg"></div>
-    </form>
+    </section>
+
+    <section class="scene-card" id="sceneCard">
+      <p class="kicker">What’s in view</p>
+      <h2 id="scene">Waiting for the camera…</h2>
+      <p class="lede" id="sceneSub">Motion with a known object becomes a log line.</p>
+      <div class="objects" id="objects"></div>
+    </section>
+
+    <section class="grid-2">
+      <div class="panel">
+        <p class="kicker">Camera</p>
+        <h2>Where to look</h2>
+        <p class="lede">Static building views. Click one to switch — the live picture pauses while it restarts.</p>
+        <div class="chips" id="sourceChips" style="margin-top:14px"></div>
+        <details class="advanced">
+          <summary>File, URL, or other cameras</summary>
+          <form class="fields" id="sourceForm">
+            <input id="sourceInput" name="source" list="sourceOptions" autocomplete="off" spellcheck="false"
+              placeholder="data/samples/entrance.mp4" />
+            <button class="btn" type="submit" id="applySource">Use this</button>
+          </form>
+          <p class="lede" style="margin-top:12px">Street stills (NYC DOT), not a building camera.</p>
+          <div class="chips" id="webcamChips" style="margin-top:8px"></div>
+          <datalist id="sourceOptions"></datalist>
+        </details>
+        <div class="msg" id="settingsMsg"></div>
+      </div>
+
+      <div class="panel">
+        <p class="kicker">How it sees</p>
+        <h2>Detector</h2>
+        <p class="lede">This model names people and things. Bigger is slower and usually catches more. Drones are a separate always-on model.</p>
+        <div class="cards" id="modelCards" style="margin-top:14px"></div>
+        <div class="extras" id="stack"></div>
+      </div>
+    </section>
   </main>
   <script>
-    async function refreshHealth() {
-      try {
-        const res = await fetch("/health");
-        const data = await res.json();
-        const opened = data.opened ? "live" : "waiting";
-        document.getElementById("status").innerHTML =
-          `<span class="dot">●</span> ${opened}`;
-        document.getElementById("source").textContent = data.source || "";
-        document.getElementById("fps").textContent = `ingest ${data.fps || 0} fps`;
-        document.getElementById("motion").textContent = data.last_motion
-          ? `motion area ${data.motion_area}`
-          : "no motion";
-        const dets = (data.last_detections || [])
-          .map((d) => `${d.cls} ${d.conf}`)
-          .join(", ");
-        document.getElementById("dets").textContent = dets || "no objects";
-        document.getElementById("scene").textContent = data.last_scene || "";
-        const alertEl = document.getElementById("alert");
-        if (data.last_anomaly) {
-          alertEl.textContent = data.last_anomaly;
-          alertEl.style.color = "var(--alert)";
-        } else {
-          alertEl.textContent = "";
-        }
-        if (data.display) {
-          document.getElementById("version").textContent = data.display;
-        }
-      } catch (err) {
-        document.getElementById("status").textContent = "health error";
-      }
-    }
-    refreshHealth();
-    setInterval(refreshHealth, 1500);
-
     const sourceInput = document.getElementById("sourceInput");
     const sourceOptions = document.getElementById("sourceOptions");
     const sourceChips = document.getElementById("sourceChips");
-    const modelInput = document.getElementById("modelInput");
-    const modelOptions = document.getElementById("modelOptions");
     const webcamChips = document.getElementById("webcamChips");
-    const applyBtn = document.getElementById("apply");
+    const applySource = document.getElementById("applySource");
     const settingsMsg = document.getElementById("settingsMsg");
+    const modelCards = document.getElementById("modelCards");
+    const stackEl = document.getElementById("stack");
+    let currentSource = "";
+    let currentModel = "yolov8n.pt";
+    let samples = [];
 
     function setMsg(text, kind) {
       settingsMsg.textContent = text;
       settingsMsg.className = "msg" + (kind ? " " + kind : "");
     }
 
-    async function loadSettings() {
-      const res = await fetch("/api/settings");
-      if (!res.ok) throw new Error("settings failed");
-      const data = await res.json();
-      sourceInput.value = data.source || "";
-      modelInput.value = data.model || "";
-      modelOptions.innerHTML = (data.suggested_models || [])
-        .map((name) => `<option value="${name}"></option>`)
-        .join("");
-      const sources = data.suggested_sources || [];
-      sourceOptions.innerHTML = sources
-        .map((s) => `<option value="${s.path}"></option>`)
-        .join("");
-      sourceChips.innerHTML = sources
-        .map((s) => `<button type="button" data-path="${s.path}">${s.label}</button>`)
-        .join("");
-      sourceChips.querySelectorAll("button").forEach((btn) => {
-        btn.addEventListener("click", () => {
-          sourceInput.value = btn.getAttribute("data-path") || "";
-        });
-      });
-      const cams = data.suggested_webcams || [];
-      sourceOptions.innerHTML += cams
-        .map((s) => `<option value="${s.path}"></option>`)
-        .join("");
-      webcamChips.innerHTML = cams
-        .map((s) => `<button type="button" data-path="${s.path}">${s.label}</button>`)
-        .join("");
-      webcamChips.querySelectorAll("button").forEach((btn) => {
-        btn.addEventListener("click", () => {
-          sourceInput.value = btn.getAttribute("data-path") || "";
-        });
-      });
-      const vis = data.vision || {};
-      document.getElementById("visionHint").textContent = vis.enabled
-        ? `Scene log: ${vis.provider}. Drones and unexpected objects are flagged as alerts.`
-        : "Scene notes are off.";
+    function friendlyCamera(source) {
+      const s = String(source || "");
+      const hit = samples.find((x) => s === x.path || s.endsWith(x.path) || s.endsWith("/" + x.path.split("/").pop()));
+      if (hit) return hit.title || hit.label;
+      const cam = [...webcamChips.querySelectorAll("button")]
+        .find((b) => s === b.getAttribute("data-path"));
+      if (cam) return cam.textContent;
+      if (!s) return "Camera";
+      const parts = s.split(/[/\\]/);
+      return parts[parts.length - 1] || "Camera";
     }
 
-    document.getElementById("settings").addEventListener("submit", async (ev) => {
-      ev.preventDefault();
-      applyBtn.disabled = true;
-      setMsg("Applying… live view will pause while the pipeline restarts.");
+    function markSelected() {
+      sourceChips.querySelectorAll("button").forEach((btn) => {
+        btn.classList.toggle("selected", btn.getAttribute("data-path") === currentSource);
+      });
+      webcamChips.querySelectorAll("button").forEach((btn) => {
+        btn.classList.toggle("selected", btn.getAttribute("data-path") === currentSource);
+      });
+      modelCards.querySelectorAll(".card").forEach((btn) => {
+        btn.classList.toggle("selected", btn.getAttribute("data-id") === currentModel);
+      });
+      document.getElementById("cameraName").textContent = friendlyCamera(currentSource);
+    }
+
+    async function applySettings(source, model, note) {
+      applySource.disabled = true;
+      setMsg(note || "Switching camera… live view pauses for a moment.");
       try {
         const res = await fetch("/api/settings", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            source: sourceInput.value,
-            model: modelInput.value,
-          }),
+          body: JSON.stringify({ source, model }),
         });
         const data = await res.json();
-        if (!res.ok) {
-          throw new Error(data.detail || "could not apply settings");
-        }
-        sourceInput.value = data.source || sourceInput.value;
-        modelInput.value = data.model || modelInput.value;
+        if (!res.ok) throw new Error(data.detail || "could not apply settings");
+        currentSource = data.source || source;
+        currentModel = data.model || model;
+        sourceInput.value = currentSource;
         document.getElementById("stream").src = "/api/stream.mjpg?" + Date.now();
-        setMsg("Applied. A new model may take a minute to download.", "ok");
+        markSelected();
+        setMsg("Updated.", "ok");
         refreshHealth();
       } catch (err) {
         setMsg(err.message || "could not apply settings", "err");
       } finally {
-        applyBtn.disabled = false;
+        applySource.disabled = false;
       }
+    }
+
+    async function refreshHealth() {
+      try {
+        const res = await fetch("/health");
+        const data = await res.json();
+        const status = document.getElementById("status");
+        if (data.opened) {
+          status.className = "pill live";
+          status.innerHTML = '<span class="dot">●</span> Live';
+        } else {
+          status.className = "pill wait";
+          status.innerHTML = '<span class="dot">●</span> Waiting';
+        }
+        document.getElementById("cameraName").textContent = friendlyCamera(currentSource || data.source);
+        const scene = document.getElementById("scene");
+        const sub = document.getElementById("sceneSub");
+        const card = document.getElementById("sceneCard");
+        const alertPill = document.getElementById("alertPill");
+        if (data.last_anomaly) {
+          card.classList.add("alert");
+          scene.textContent = data.last_scene || data.last_anomaly;
+          sub.textContent = data.last_anomaly;
+          alertPill.hidden = false;
+          alertPill.textContent = data.last_anomaly;
+        } else {
+          card.classList.remove("alert");
+          scene.textContent = data.last_scene || (data.last_motion ? "Motion, nothing named yet." : "Quiet.");
+          sub.textContent = data.last_motion ? "Something moved in the frame." : "No motion right now.";
+          alertPill.hidden = true;
+        }
+        const objs = document.getElementById("objects");
+        const dets = data.last_detections || [];
+        objs.innerHTML = dets.length
+          ? dets.map((d) => `<span>${d.cls}</span>`).join("")
+          : "";
+        if (data.display) document.getElementById("version").textContent = data.display;
+      } catch (err) {
+        document.getElementById("status").textContent = "Health error";
+      }
+    }
+
+    function renderModels(detectors) {
+      modelCards.innerHTML = (detectors || []).map((m) => `
+        <button type="button" class="card" data-id="${m.id}">
+          <div class="row">
+            <b>${m.name} · ${m.family}</b>
+            ${m.recommended ? '<span class="rec">Recommended</span>' : `<span class="why">${m.id}</span>`}
+          </div>
+          <p>${m.blurb}</p>
+          <p>${m.choose_when}</p>
+        </button>
+      `).join("");
+      modelCards.querySelectorAll(".card").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          applySettings(sourceInput.value || currentSource, btn.getAttribute("data-id"), "Loading detector… first use may download weights.");
+        });
+      });
+    }
+
+    async function loadSettings() {
+      const res = await fetch("/api/settings");
+      if (!res.ok) throw new Error("settings failed");
+      const data = await res.json();
+      currentSource = data.source || "";
+      currentModel = data.model || "yolov8n.pt";
+      sourceInput.value = currentSource;
+      samples = data.suggested_sources || [];
+      sourceOptions.innerHTML = samples.map((s) => `<option value="${s.path}"></option>`).join("");
+      sourceChips.innerHTML = samples.map((s) =>
+        `<button type="button" data-path="${s.path}">${s.title || s.label}</button>`
+      ).join("");
+      sourceChips.querySelectorAll("button").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          applySettings(btn.getAttribute("data-path"), currentModel);
+        });
+      });
+      const cams = data.suggested_webcams || [];
+      sourceOptions.innerHTML += cams.map((s) => `<option value="${s.path}"></option>`).join("");
+      webcamChips.innerHTML = cams.map((s) =>
+        `<button type="button" data-path="${s.path}">${s.label}</button>`
+      ).join("");
+      webcamChips.querySelectorAll("button").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          applySettings(btn.getAttribute("data-path"), currentModel);
+        });
+      });
+      renderModels(data.detectors || []);
+      stackEl.innerHTML = (data.stack || []).map((s) =>
+        `<div class="extra"><b>${s.name} · ${s.status}</b><p>${s.blurb}</p></div>`
+      ).join("");
+      markSelected();
+    }
+
+    document.getElementById("sourceForm").addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      applySettings(sourceInput.value, currentModel);
     });
 
-    loadSettings().catch(() => setMsg("Could not load current settings.", "err"));
+    refreshHealth();
+    setInterval(refreshHealth, 1500);
+    loadSettings().catch(() => setMsg("Could not load settings.", "err"));
   </script>
 </body>
 </html>
