@@ -34,13 +34,13 @@ pip install -r requirements.txt
 
 `torchvision` must come from the same PyTorch CPU index; a PyPI wheel can fail with `operator torchvision::nms does not exist`.
 
-Download a short sample clip (people walking) so you can run without a camera:
+Download sample clips (city street, parking lot, cars, wildlife, livestock, aircraft, drone, indoor people) so you can run without a camera:
 
 ```bash
 python scripts/download_sample.py
 ```
 
-Or point `camera.source` in `config.yaml` at an RTSP URL, HTTP stream, local file, or camera index (`0`). The live page can also change source and model without editing the file.
+Default source is `data/samples/city.mp4`. The live page lists each clip as a button. Or point `camera.source` at an RTSP URL, HTTP stream, local file, or camera index (`0`).
 
 ## Run
 
@@ -70,7 +70,7 @@ See [`config.yaml`](config.yaml). The live page **Apply** button writes `data/se
 - `pipeline.detect_fps` — detection rate; extra frames are dropped
 - `motion.min_area` — ignore small pixel changes
 - `detection.model` — Ultralytics weights (`yolov8n.pt` by default). Also editable on the live page.
-- `detection.classes` — allowlist (default `person`, `car`, `dog`, `cat`)
+- `detection.classes` — allowlist (people, vehicles, aircraft, common animals). Stock YOLO has no drone class.
 - `events.pre_seconds` / `post_seconds` / `cooldown_seconds` — clip window and anti-flood
 - `events.retention_days` — delete old events, thumbs, and clips
 - `server.host` / `server.port`
