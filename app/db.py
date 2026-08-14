@@ -32,7 +32,9 @@ class EventStore:
                     score REAL,
                     thumb_path TEXT,
                     clip_path TEXT,
-                    summary TEXT
+                    summary TEXT,
+                    anomaly INTEGER DEFAULT 0,
+                    anomaly_reason TEXT
                 )
                 """
             )
@@ -42,6 +44,10 @@ class EventStore:
             }
             if "summary" not in cols:
                 self._conn.execute("ALTER TABLE events ADD COLUMN summary TEXT")
+            if "anomaly" not in cols:
+                self._conn.execute("ALTER TABLE events ADD COLUMN anomaly INTEGER DEFAULT 0")
+            if "anomaly_reason" not in cols:
+                self._conn.execute("ALTER TABLE events ADD COLUMN anomaly_reason TEXT")
             self._conn.commit()
 
     def insert(
@@ -52,14 +58,28 @@ class EventStore:
         score: float,
         thumb_path: str | None,
         clip_path: str | None,
+        anomaly: bool = False,
+        anomaly_reason: str = "",
     ) -> int:
         with self._lock:
             cur = self._conn.execute(
                 """
-                INSERT INTO events (ts_start, ts_end, classes, score, thumb_path, clip_path)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO events (
+                    ts_start, ts_end, classes, score, thumb_path, clip_path,
+                    anomaly, anomaly_reason
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (ts_start, ts_end, json.dumps(classes), score, thumb_path, clip_path),
+                (
+                    ts_start,
+                    ts_end,
+                    json.dumps(classes),
+                    score,
+                    thumb_path,
+                    clip_path,
+                    1 if anomaly else 0,
+                    anomaly_reason or None,
+                ),
             )
             self._conn.commit()
             return int(cur.lastrowid)
@@ -72,12 +92,18 @@ class EventStore:
             )
             self._conn.commit()
 
-    def list_events(self, limit: int = 50) -> list[dict[str, Any]]:
+    def list_events(self, limit: int = 50, alerts_only: bool = False) -> list[dict[str, Any]]:
         with self._lock:
-            rows = self._conn.execute(
-                "SELECT * FROM events ORDER BY id DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
+            if alerts_only:
+                rows = self._conn.execute(
+                    "SELECT * FROM events WHERE anomaly = 1 ORDER BY id DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT * FROM events ORDER BY id DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
         return [self._row_to_dict(row) for row in rows]
 
     def get(self, event_id: int) -> dict[str, Any] | None:
@@ -112,6 +138,8 @@ class EventStore:
             data["classes"] = json.loads(data["classes"])
         except (TypeError, json.JSONDecodeError):
             data["classes"] = []
+        data["anomaly"] = bool(data.get("anomaly"))
+        data["anomaly_reason"] = data.get("anomaly_reason") or ""
         return data
 
 

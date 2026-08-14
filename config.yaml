@@ -1,6 +1,6 @@
 camera:
   # File path, RTSP/HTTP URL, or camera index (0). File sources loop by default.
-  source: data/samples/city.mp4
+  source: data/samples/entrance.mp4
   width: 1280
   height: 720
   loop_file: true
@@ -18,27 +18,26 @@ motion:
 detection:
   model: yolov8n.pt
   conf: 0.4
-  # Stock YOLO has no drone class; airplane/bird are the closest.
+  # Second model (YOLOv8n) trained to spot quadcopters and fixed-wing UAVs.
+  drone_model: drone-yolo.pt
+  drone_conf: 0.3
   classes:
     - person
     - bicycle
     - car
     - motorcycle
-    - airplane
     - bus
-    - train
     - truck
-    - boat
     - bird
     - cat
     - dog
-    - horse
-    - sheep
-    - cow
-    - elephant
-    - bear
-    - zebra
-    - giraffe
+    - backpack
+    - handbag
+    - suitcase
+    - umbrella
+    - skateboard
+    - airplane
+    - drone
   device: cpu
 
 events:
@@ -60,3 +59,25 @@ vision:
   ollama_model: moondream
   openai_model: gpt-4o-mini
   timeout_seconds: 25
+
+monitoring:
+  # Ordinary for a building camera. Anything else is flagged.
+  expected_classes:
+    - person
+    - bicycle
+    - car
+    - motorcycle
+    - bus
+    - truck
+    - backpack
+    - handbag
+    - suitcase
+    - umbrella
+    - dog
+    - cat
+    - bird
+    - skateboard
+  alert_classes:
+    - drone
+    - airplane
+  unattended_bags: true

@@ -13,15 +13,16 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from app.anomaly import classify_anomaly
 from app.config import AppConfig
 from app.db import EventStore, utc_now
 from app.detect import Detection, ObjectDetector, draw_overlay
 from app.motion import MotionDetector
 from app.record import ClipWriter, cleanup_old_events, save_thumb
-from app.vision import describe_event
+from app.vision import describe_event, fallback_summary
 
 log = logging.getLogger(__name__)
-_SNAPSHOT_UA = "TundraNVR/0.4"
+_SNAPSHOT_UA = "TundraNVR/0.5"
 
 
 def _encode_jpeg(frame: np.ndarray, quality: int) -> bytes:
@@ -40,6 +41,8 @@ class PipelineStatus:
     last_motion: bool = False
     motion_area: int = 0
     last_detections: list[dict] = field(default_factory=list)
+    last_scene: str = ""
+    last_anomaly: str = ""
     last_error: str | None = None
     reconnects: int = 0
     started_at: float = 0.0
@@ -70,6 +73,8 @@ class Pipeline:
             conf=cfg.detection.conf,
             classes=cfg.detection.classes,
             device=cfg.detection.device,
+            drone_model=cfg.detection.drone_model,
+            drone_conf=cfg.detection.drone_conf,
         )
         self.store = EventStore(cfg.db_path)
         self.status = PipelineStatus(source=str(cfg.resolved_source()))
@@ -124,6 +129,8 @@ class Pipeline:
                 "last_motion": self.status.last_motion,
                 "motion_area": self.status.motion_area,
                 "last_detections": list(self.status.last_detections),
+                "last_scene": self.status.last_scene,
+                "last_anomaly": self.status.last_anomaly,
                 "last_error": self.status.last_error,
                 "reconnects": self.status.reconnects,
                 "uptime_s": round(uptime, 1),
@@ -341,8 +348,18 @@ class Pipeline:
             self._last_dets = detections
             self._overlay_until = now + self._overlay_ttl
             payload = [{"cls": d.cls, "conf": round(d.conf, 3)} for d in detections]
+            classes = [d.cls for d in detections]
+            anomaly = classify_anomaly(
+                classes,
+                expected=self.cfg.monitoring.expected_classes,
+                alert=self.cfg.monitoring.alert_classes,
+                unattended_bags=self.cfg.monitoring.unattended_bags,
+            )
+            scene = fallback_summary(sorted(set(classes)), max(d.conf for d in detections), anomaly.reason)
             with self._lock:
                 self.status.last_detections = payload
+                self.status.last_scene = scene
+                self.status.last_anomaly = anomaly.reason
             self._on_match(frame, detections, now)
         else:
             with self._lock:
@@ -412,26 +429,39 @@ class Pipeline:
         except Exception:
             log.exception("Error closing clip writer")
         event_id = None
+        classes = sorted(active.classes)
+        score = round(active.score, 3)
+        anomaly = classify_anomaly(
+            classes,
+            expected=self.cfg.monitoring.expected_classes,
+            alert=self.cfg.monitoring.alert_classes,
+            unattended_bags=self.cfg.monitoring.unattended_bags,
+        )
         try:
             event_id = self.store.insert(
                 ts_start=active.ts_start,
                 ts_end=utc_now(),
-                classes=sorted(active.classes),
-                score=round(active.score, 3),
+                classes=classes,
+                score=score,
                 thumb_path=f"thumbs/{active.thumb_name}",
                 clip_path=f"clips/{active.clip_name}",
+                anomaly=anomaly.flagged,
+                anomaly_reason=anomaly.reason,
             )
         except Exception:
             log.exception("Failed to persist event")
         self._cooldown_until = time.monotonic() + self.cfg.events.cooldown_seconds
-        log.info("Event saved %s", active.clip_name)
+        log.info(
+            "Event saved %s anomaly=%s %s",
+            active.clip_name,
+            anomaly.flagged,
+            anomaly.reason,
+        )
         if event_id:
             thumb = self.cfg.thumbs_dir / active.thumb_name
-            classes = sorted(active.classes)
-            score = round(active.score, 3)
             threading.Thread(
                 target=self._describe_event,
-                args=(event_id, thumb, classes, score),
+                args=(event_id, thumb, classes, score, anomaly.reason),
                 name=f"nvr-vision-{event_id}",
                 daemon=True,
             ).start()
@@ -441,10 +471,17 @@ class Pipeline:
             log.exception("Retention cleanup failed")
 
     def _describe_event(
-        self, event_id: int, thumb: Path, classes: list[str], score: float
+        self,
+        event_id: int,
+        thumb: Path,
+        classes: list[str],
+        score: float,
+        anomaly_reason: str,
     ) -> None:
         try:
-            summary, provider = describe_event(self.cfg.vision, thumb, classes, score)
+            summary, provider = describe_event(
+                self.cfg.vision, thumb, classes, score, anomaly_reason
+            )
             self.store.update_summary(event_id, summary)
             log.info("Event %s described via %s", event_id, provider)
         except Exception:

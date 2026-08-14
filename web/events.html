@@ -12,6 +12,7 @@
       --text: #e8eaed;
       --muted: #9aa3b2;
       --accent: #7eb8ff;
+      --alert: #ff8b8b;
     }
     * { box-sizing: border-box; }
     body {
@@ -64,6 +65,16 @@
     }
     .empty, .muted { color: var(--muted); }
     td.scene { color: var(--muted); font-size: 13px; max-width: 240px; }
+    .badge {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: #3a2424;
+      color: var(--alert);
+    }
+    tr.alert { background: #1e1616; }
     .summary {
       margin-top: 12px;
       line-height: 1.45;
@@ -92,11 +103,12 @@
             <th>Time</th>
             <th>Classes</th>
             <th>Score</th>
+            <th>Alert</th>
             <th>Scene</th>
           </tr>
         </thead>
         <tbody id="rows">
-          <tr><td class="empty" colspan="5">Loading…</td></tr>
+          <tr><td class="empty" colspan="6">Loading…</td></tr>
         </tbody>
       </table>
     </section>
@@ -127,22 +139,26 @@
         player.play().catch(() => {});
       }
       detail.textContent = `#${event.id}  ${fmt(event.ts_start)}  ${(event.classes || []).join(", ")}  score ${event.score ?? ""}`;
-      summaryEl.textContent = event.summary || "Scene note not ready yet — refresh in a few seconds.";
+      const flag = event.anomaly
+        ? `Alert: ${event.anomaly_reason || "unusual activity"}. `
+        : "";
+      summaryEl.textContent = flag + (event.summary || "Scene note not ready yet — refresh in a few seconds.");
     }
 
     async function loadEvents() {
       const res = await fetch("/api/events?limit=80");
       const events = await res.json();
       if (!events.length) {
-        rowsEl.innerHTML = `<tr><td class="empty" colspan="5">No events yet. Motion with a matching class will show up here.</td></tr>`;
+        rowsEl.innerHTML = `<tr><td class="empty" colspan="6">No events yet. Motion with a matching class will show up here.</td></tr>`;
         return;
       }
       rowsEl.innerHTML = events.map((e) => `
-        <tr id="evt-${e.id}">
+        <tr id="evt-${e.id}" class="${e.anomaly ? "alert" : ""}">
           <td>${e.thumb_url ? `<img class="thumb" src="${e.thumb_url}" alt="" />` : ""}</td>
           <td>${fmt(e.ts_start)}</td>
           <td>${(e.classes || []).join(", ")}</td>
           <td>${e.score ?? ""}</td>
+          <td>${e.anomaly ? `<span class="badge">${e.anomaly_reason || "alert"}</span>` : ""}</td>
           <td class="scene">${e.summary ? e.summary.slice(0, 90) + (e.summary.length > 90 ? "…" : "") : "…"}</td>
         </tr>
       `).join("");

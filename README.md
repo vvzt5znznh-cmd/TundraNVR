@@ -1,8 +1,8 @@
 # TundraNVR
 
-Local camera detection MVP: **camera or video file → motion filter → object detection → save events/clips → simple web UI**.
+Local building CCTV monitor: **fixed camera or video file → motion filter → object detection (people/vehicles + drones) → log what happened → save clips → web UI**.
 
-One camera or one sample video is enough.
+One camera or one sample clip is enough. Samples are **static** security-camera views (entrance, corridor, lobby, parking), not handheld or moving shots.
 
 ## Stack
 
@@ -12,8 +12,9 @@ One camera or one sample video is enough.
 | API / UI | FastAPI + static HTML |
 | Ingest | OpenCV `VideoCapture` |
 | Motion | OpenCV frame differencing |
-| Detection | Ultralytics YOLO nano on CPU |
+| Detection | Ultralytics YOLO nano on CPU, plus a UAV/drone model |
 | Scene notes | Ollama, OpenAI vision, or YOLO fallback |
+| Alerts | Rule-based anomaly flags (drone, aircraft, unattended bag, unexpected class) |
 | Storage | SQLite + filesystem clips/thumbs |
 | Live view | MJPEG / JPEG over HTTP |
 | Config | `config.yaml` |
@@ -35,13 +36,13 @@ pip install -r requirements.txt
 
 `torchvision` must come from the same PyTorch CPU index; a PyPI wheel can fail with `operator torchvision::nms does not exist`.
 
-Download sample clips (city street, parking lot, cars, wildlife, livestock, aircraft, drone, indoor people) so you can run without a camera:
+Download static building-CCTV clips and the drone weights:
 
 ```bash
 python scripts/download_sample.py
 ```
 
-Default source is `data/samples/city.mp4`. The live page lists each clip as a button, plus official NYC DOT traffic stills for a live outdoor test. Or point `camera.source` at an RTSP URL, HTTP stream, JPEG still URL, local file, or camera index (`0`).
+Default source is `data/samples/entrance.mp4` (CAVIAR building door). The live page lists each clip as a button. Or point `camera.source` at an RTSP URL, HTTP stream, JPEG still URL, local file, or camera index (`0`).
 
 ## Run
 
@@ -49,19 +50,19 @@ Default source is `data/samples/city.mp4`. The live page lists each clip as a bu
 python -m app.main
 ```
 
-Then open http://127.0.0.1:8000 — live view — and http://127.0.0.1:8000/events for history. The header shows the app version.
+Then open http://127.0.0.1:8000 — live view — and http://127.0.0.1:8000/events for the log. The header shows the app version.
 
 | Route | Role |
 | --- | --- |
-| `GET /health` | ingest status, fps, last motion/detections, app version |
+| `GET /health` | ingest status, last detections, last scene note, anomaly flag, version |
 | `GET /api/frame.jpg` | latest JPEG (with overlay) |
 | `GET /api/stream.mjpg` | live MJPEG |
-| `GET /api/events` | recent events JSON |
+| `GET /api/events` | recent events JSON (`?alerts=true` for flagged only) |
 | `GET /api/settings` | current video source and YOLO model |
 | `PUT /api/settings` | set source/model, persist, restart pipeline |
 | `GET /media/...` | thumbs and clips |
 
-YOLO downloads `yolov8n.pt` on first detection run.
+YOLO downloads `yolov8n.pt` on first detection run. `scripts/download_sample.py` also fetches `drone-yolo.pt`.
 
 ## Config keys
 
@@ -71,7 +72,11 @@ See [`config.yaml`](config.yaml). The live page **Apply** button writes `data/se
 - `pipeline.detect_fps` — detection rate; extra frames are dropped
 - `motion.min_area` — ignore small pixel changes
 - `detection.model` — Ultralytics weights (`yolov8n.pt` by default). Also editable on the live page.
-- `detection.classes` — allowlist (people, vehicles, aircraft, common animals). Stock YOLO has no drone class.
+- `detection.drone_model` — second YOLO trained on quadcopters and fixed-wing UAVs (`drone-yolo.pt`)
+- `detection.classes` — building allowlist (people, vehicles, bags, pets, drone, airplane)
+- `monitoring.expected_classes` — ordinary for a building camera
+- `monitoring.alert_classes` — always flagged (`drone`, `airplane`)
+- `monitoring.unattended_bags` — flag backpack/handbag/suitcase with no person
 - `events.pre_seconds` / `post_seconds` / `cooldown_seconds` — clip window and anti-flood
 - `events.retention_days` — delete old events, thumbs, and clips
 - `server.host` / `server.port`
@@ -79,25 +84,35 @@ See [`config.yaml`](config.yaml). The live page **Apply** button writes `data/se
 - `vision.ollama_url` / `vision.ollama_model` — local vision model (default `moondream` at `http://127.0.0.1:11434`)
 - `vision.openai_model` — used when `OPENAI_API_KEY` is set (default `gpt-4o-mini`)
 
-## Scene notes
+## Scene log and alerts
 
-After an event is saved, a short caption is written to the event’s `summary` and shown on `/events`. With `vision.provider: auto` the app tries, in order:
+After an event is saved, a short caption is written to the event’s `summary` and shown on `/events`. The live page also shows the latest `last_scene` line from `/health`.
+
+With `vision.provider: auto` the app tries, in order:
 
 1. A local Ollama vision model (`ollama pull moondream`)
 2. OpenAI if `OPENAI_API_KEY` is in the environment
-3. A YOLO-based sentence from the detected classes (always available; no extra install)
+3. A YOLO-based sentence from the detected classes (always available)
 
-This is a still-image caption, not a full video narrative. Set `vision.provider: off` to skip the LLM and keep only the YOLO note.
+Alerts are a first-cut rule check, not a trained anomaly model:
+
+- `drone` or `airplane` → always an alert
+- bag class with no person → unattended bag
+- any other class not in `monitoring.expected_classes` → unexpected
+
+A learned “this is not how this camera usually looks” model is the next step; the `anomaly` / `anomaly_reason` fields on each event are the place that will plug in.
 
 ## Public webcams
 
-The live page lists official [NYC DOT](https://webcams.nyctmc.org/) JPEG stills. Those URLs are single frames, not video streams; ingest re-fetches about every 1.5 seconds. They are public traffic cameras, so expect road scenes, not a private property feed.
+The live page still lists official [NYC DOT](https://webcams.nyctmc.org/) JPEG stills as optional live sources. Those are street cameras, not building CCTV. JPEG still URLs are re-fetched about every 1.5 seconds.
 
 Do not point the source at random unsecured IP cameras. Stick to feeds the operator publishes.
 
 ## Pipeline
 
-Motion without a matching class does **not** create events. A matching detection writes an event, a JPEG thumb, a short MP4 clip (H.264 via ffmpeg when available), and a scene note. If the stream drops, ingest reopens the capture after a short backoff. JPEG still URLs are re-fetched on an interval instead of treated as end-of-file.
+Motion without a matching class does **not** create events. A matching detection writes an event, a JPEG thumb, a short MP4 clip (H.264 via ffmpeg when available), a scene note, and an optional anomaly flag. If the stream drops, ingest reopens the capture after a short backoff. JPEG still URLs are re-fetched on an interval instead of treated as end-of-file.
+
+Entrance/corridor/lobby clips are from the EC CAVIAR project (IST 2001 37540).
 
 ## Non-goals
 

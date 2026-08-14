@@ -13,54 +13,71 @@ from app.config import VisionConfig
 log = logging.getLogger(__name__)
 
 PROMPT = (
-    "You are looking at a security-camera still. Detected objects: {objects}. "
-    "In 2-3 short sentences describe what is in the frame, what is likely happening, "
-    "and whether it looks like ordinary activity around roads or buildings or something unusual. "
+    "You are looking at a still from a fixed CCTV camera on a building "
+    "(entrance, lobby, corridor, parking, or courtyard). Detected objects: {objects}. "
+    "Anomaly flag: {anomaly}. In 2-3 short sentences log what is in the frame, "
+    "what is likely happening, and whether that is ordinary for this kind of camera "
+    "or worth an alert (drone, unattended bag, unexpected animal or vehicle). "
     "Do not mention models or that this is a test."
 )
 
 
-def fallback_summary(classes: list[str], score: float) -> str:
+def fallback_summary(
+    classes: list[str],
+    score: float,
+    anomaly_reason: str = "",
+) -> str:
     labels = ", ".join(classes) if classes else "motion"
     if not classes:
         return "Motion was detected, but no allow-listed object was named."
-    unusual = {"airplane", "bear", "elephant", "zebra", "giraffe"}
-    if unusual.intersection(classes):
-        kind = "unusual for a typical street — worth a look"
-    elif {"person", "car", "truck", "bus", "bicycle", "motorcycle"} & set(classes):
-        kind = "ordinary traffic or foot traffic around infrastructure"
-    elif {"dog", "cat", "horse", "sheep", "cow", "bird"} & set(classes):
-        kind = "an animal near a road or building"
+    if anomaly_reason:
+        return (
+            f"Detected {labels} (score {score:.2f}). "
+            f"Flagged as unusual for a building camera: {anomaly_reason}."
+        )
+    if "drone" in classes:
+        return f"Detected {labels} (score {score:.2f}). A drone near a building is worth an alert."
+    if {"person"} & set(classes):
+        kind = "ordinary foot traffic around the building"
+    elif {"car", "truck", "bus", "bicycle", "motorcycle"} & set(classes):
+        kind = "ordinary vehicle activity at the building"
+    elif {"dog", "cat", "bird"} & set(classes):
+        kind = "an animal near the building"
     else:
         kind = "activity in the scene"
-    return (
-        f"Detected {labels} (score {score:.2f}). This looks like {kind}."
-    )
+    return f"Detected {labels} (score {score:.2f}). This looks like {kind}."
 
 
-def describe_event(cfg: VisionConfig, thumb: Path, classes: list[str], score: float) -> tuple[str, str]:
+def describe_event(
+    cfg: VisionConfig,
+    thumb: Path,
+    classes: list[str],
+    score: float,
+    anomaly_reason: str = "",
+) -> tuple[str, str]:
     """Return (summary, provider_used). Never raises."""
     objects = ", ".join(classes) if classes else "none"
-    prompt = PROMPT.format(objects=objects)
+    anomaly = anomaly_reason or "none"
+    prompt = PROMPT.format(objects=objects, anomaly=anomaly)
     provider = (cfg.provider or "auto").lower()
     if provider in {"off", "none", "false"}:
-        return fallback_summary(classes, score), "off"
+        return fallback_summary(classes, score, anomaly_reason), "off"
     if not cfg.enabled:
-        return fallback_summary(classes, score), "off"
+        return fallback_summary(classes, score, anomaly_reason), "off"
     if not thumb.is_file():
-        return fallback_summary(classes, score), "fallback"
+        return fallback_summary(classes, score, anomaly_reason), "fallback"
     jpeg = thumb.read_bytes()
     if provider in {"auto", "ollama"}:
         text = _ollama(cfg, jpeg, prompt)
         if text:
             return text, "ollama"
         if provider == "ollama":
-            return fallback_summary(classes, score), "fallback"
+            return fallback_summary(classes, score, anomaly_reason), "fallback"
     if provider in {"auto", "openai"}:
         text = _openai(cfg, jpeg, prompt)
         if text:
             return text, "openai"
-    return fallback_summary(classes, score), "fallback"
+    return fallback_summary(classes, score, anomaly_reason), "fallback"
 
 
 def _ollama(cfg: VisionConfig, jpeg: bytes, prompt: str) -> str | None:

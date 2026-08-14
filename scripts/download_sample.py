@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Download public sample clips into data/samples/."""
+"""Download static building-CCTV sample clips and the drone detector weights."""
 
 from __future__ import annotations
 
@@ -15,9 +15,23 @@ from urllib.parse import quote
 ROOT = Path(__file__).resolve().parent.parent
 SAMPLES_DIR = ROOT / "data" / "samples"
 LEGACY_SAMPLE = ROOT / "data" / "sample.mp4"
-USER_AGENT = "TundraNVR/0.3 (sample downloader)"
+DRONE_WEIGHTS = ROOT / "drone-yolo.pt"
+USER_AGENT = "TundraNVR/0.5 (sample downloader)"
 INTEL = "https://github.com/intel-iot-devkit/sample-videos/raw/master"
+CAVIAR1 = "https://groups.inf.ed.ac.uk/vision/DATASETS/CAVIAR/CAVIARDATA1"
+CAVIAR2 = "https://groups.inf.ed.ac.uk/vision/DATASETS/CAVIAR/CAVIARDATA2"
 COMMONS = "https://commons.wikimedia.org/wiki/Special:FilePath"
+DRONE_WEIGHTS_URL = "https://huggingface.co/TomSmail/drone-yolo-v1/resolve/main/best.pt"
+
+OBSOLETE = [
+    "city.mp4",
+    "street.mp4",
+    "cars.mp4",
+    "wildlife.mp4",
+    "livestock.mp4",
+    "aircraft.mp4",
+    "people.mp4",
+]
 
 
 @dataclass(frozen=True)
@@ -32,53 +46,55 @@ class Sample:
 
 SAMPLES = [
     Sample(
-        "city.mp4",
-        "https://videos.pexels.com/video-files/1721294/1721294-hd_1280_720_25fps.mp4",
-        "City street — people, buses, cars",
+        "entrance.mp4",
+        f"{CAVIAR2}/EnterExitCrossingPaths1front/EnterExitCrossingPaths1front.mpg",
+        "Building entrance — people at the door (CAVIAR)",
+        transcode=True,
+        max_seconds=40,
     ),
     Sample(
-        "street.mp4",
-        f"{INTEL}/person-bicycle-car-detection.mp4",
-        "Parking lot — people, bicycles, cars",
+        "corridor.mp4",
+        f"{CAVIAR2}/EnterExitCrossingPaths1cor/EnterExitCrossingPaths1cor.mpg",
+        "Indoor corridor — people walking (CAVIAR)",
+        transcode=True,
+        max_seconds=40,
     ),
     Sample(
-        "cars.mp4",
-        f"{INTEL}/car-detection.mp4",
-        "Overhead cars",
+        "lobby.mp4",
+        f"{CAVIAR1}/Meet_Crowd/Meet_Crowd.mpg",
+        "Indoor lobby — people meeting (CAVIAR)",
+        transcode=True,
+        max_seconds=35,
     ),
     Sample(
-        "people.mp4",
+        "indoor.mp4",
         f"{INTEL}/people-detection.mp4",
-        "Indoor pedestrians",
+        "Indoor hall — pedestrians",
         alias_legacy=True,
     ),
     Sample(
-        "wildlife.mp4",
-        f"{COMMONS}/Metskitsed_autoteel.webm",
-        "Deer on a road",
-        transcode=True,
-        max_seconds=25,
+        "aisle.mp4",
+        f"{INTEL}/store-aisle-detection.mp4",
+        "Indoor aisle — retail CCTV",
     ),
     Sample(
-        "livestock.mp4",
-        f"{COMMONS}/Cattle_drive_on_southern_Oregon_road_(41211547371).webm",
-        "Cattle on a road",
-        transcode=True,
-        max_seconds=30,
+        "parking.mp4",
+        f"{INTEL}/person-bicycle-car-detection.mp4",
+        "Building parking — people, bicycles, cars",
     ),
     Sample(
-        "aircraft.mp4",
-        f"{COMMONS}/{quote('Plane_Spotting_Atlas_Air_Cargo_Boeing_747_Runway_at_RCTP_with_ATC_桃園機場起降.webm')}",
-        "Aircraft at a runway",
+        "package.mp4",
+        f"{CAVIAR1}/LeftBag/LeftBag.mpg",
+        "Indoor — bag left behind (CAVIAR)",
         transcode=True,
-        max_seconds=25,
+        max_seconds=40,
     ),
     Sample(
         "drone.mp4",
-        f"{COMMONS}/Quadcopter_(drone).webm",
-        "Quadcopter",
+        f"{COMMONS}/{quote('Quadcopter_20200202.webm')}",
+        "Quadcopter in view",
         transcode=True,
-        max_seconds=20,
+        max_seconds=10,
     ),
 ]
 
@@ -154,15 +170,44 @@ def download_one(sample: Sample) -> int:
     return 0
 
 
+def download_drone_weights() -> int:
+    if _ok(DRONE_WEIGHTS):
+        print(f"Exists {DRONE_WEIGHTS}")
+        return 0
+    print("Downloading drone detector weights")
+    print(f" -> {DRONE_WEIGHTS}")
+    try:
+        _fetch(DRONE_WEIGHTS_URL, DRONE_WEIGHTS)
+    except Exception as exc:
+        print(f"Failed drone-yolo.pt: {exc}", file=sys.stderr)
+        if DRONE_WEIGHTS.exists():
+            DRONE_WEIGHTS.unlink()
+        return 1
+    if not _ok(DRONE_WEIGHTS):
+        print("Drone weights look too small", file=sys.stderr)
+        return 1
+    print(f"Saved {DRONE_WEIGHTS.stat().st_size} bytes")
+    return 0
+
+
+def _remove_obsolete() -> None:
+    for name in OBSOLETE:
+        path = SAMPLES_DIR / name
+        if path.is_file():
+            path.unlink()
+            print(f"Removed old sample {path}")
+
+
 def main() -> int:
     SAMPLES_DIR.mkdir(parents=True, exist_ok=True)
-    failed = 0
+    _remove_obsolete()
+    failed = download_drone_weights()
     for sample in SAMPLES:
         failed += download_one(sample)
     if failed:
-        print(f"{failed} sample(s) failed", file=sys.stderr)
+        print(f"{failed} download(s) failed", file=sys.stderr)
         return 1
-    print("All samples ready under data/samples/")
+    print("Building CCTV samples ready under data/samples/")
     return 0
 
 

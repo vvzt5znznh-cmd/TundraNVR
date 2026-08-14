@@ -20,37 +20,53 @@ SUGGESTED_MODELS = [
 ]
 
 SAMPLE_LABELS = {
-    "city.mp4": "City street — people, buses, cars",
-    "street.mp4": "Parking lot — people, bicycles, cars",
-    "cars.mp4": "Overhead cars",
-    "wildlife.mp4": "Deer on a road",
-    "livestock.mp4": "Cattle on a road",
-    "aircraft.mp4": "Aircraft at a runway",
-    "drone.mp4": "Quadcopter",
-    "people.mp4": "Indoor pedestrians",
+    "entrance.mp4": "Building entrance — people at the door",
+    "corridor.mp4": "Indoor corridor — people walking",
+    "lobby.mp4": "Indoor lobby — people meeting",
+    "indoor.mp4": "Indoor hall — pedestrians",
+    "aisle.mp4": "Indoor aisle — retail CCTV",
+    "parking.mp4": "Building parking — people, bicycles, cars",
+    "package.mp4": "Indoor — bag left behind",
+    "drone.mp4": "Quadcopter in view",
 }
 
-OUTDOOR_CLASSES = [
+BUILDING_CLASSES = [
     "person",
     "bicycle",
     "car",
     "motorcycle",
-    "airplane",
     "bus",
-    "train",
     "truck",
-    "boat",
     "bird",
     "cat",
     "dog",
-    "horse",
-    "sheep",
-    "cow",
-    "elephant",
-    "bear",
-    "zebra",
-    "giraffe",
+    "backpack",
+    "handbag",
+    "suitcase",
+    "umbrella",
+    "skateboard",
+    "airplane",
+    "drone",
 ]
+
+EXPECTED_CLASSES = [
+    "person",
+    "bicycle",
+    "car",
+    "motorcycle",
+    "bus",
+    "truck",
+    "backpack",
+    "handbag",
+    "suitcase",
+    "umbrella",
+    "dog",
+    "cat",
+    "bird",
+    "skateboard",
+]
+
+ALERT_CLASSES = ["drone", "airplane"]
 
 
 class SettingsError(ValueError):
@@ -68,7 +84,7 @@ def _as_source(value: Any) -> str | int:
 
 @dataclass
 class CameraConfig:
-    source: str | int = "data/samples/city.mp4"
+    source: str | int = "data/samples/entrance.mp4"
     width: int = 1280
     height: int = 720
     loop_file: bool = True
@@ -92,8 +108,17 @@ class MotionConfig:
 class DetectionConfig:
     model: str = "yolov8n.pt"
     conf: float = 0.4
-    classes: list[str] = field(default_factory=lambda: list(OUTDOOR_CLASSES))
+    classes: list[str] = field(default_factory=lambda: list(BUILDING_CLASSES))
     device: str = "cpu"
+    drone_model: str = "drone-yolo.pt"
+    drone_conf: float = 0.3
+
+
+@dataclass
+class MonitoringConfig:
+    expected_classes: list[str] = field(default_factory=lambda: list(EXPECTED_CLASSES))
+    alert_classes: list[str] = field(default_factory=lambda: list(ALERT_CLASSES))
+    unattended_bags: bool = True
 
 
 @dataclass
@@ -154,6 +179,7 @@ class AppConfig:
     events: EventsConfig
     server: ServerConfig
     vision: VisionConfig
+    monitoring: MonitoringConfig
     root: Path = ROOT
 
     @property
@@ -203,10 +229,11 @@ def load_config(path: Path | None = None) -> AppConfig:
     events_raw = raw.get("events") or {}
     server_raw = raw.get("server") or {}
     vision_raw = raw.get("vision") or {}
+    monitoring_raw = raw.get("monitoring") or {}
 
     cfg = AppConfig(
         camera=CameraConfig(
-            source=_as_source(camera_raw.get("source", "data/samples/city.mp4")),
+            source=_as_source(camera_raw.get("source", "data/samples/entrance.mp4")),
             width=int(camera_raw.get("width", 1280)),
             height=int(camera_raw.get("height", 720)),
             loop_file=bool(camera_raw.get("loop_file", True)),
@@ -224,8 +251,10 @@ def load_config(path: Path | None = None) -> AppConfig:
         detection=DetectionConfig(
             model=str(detection_raw.get("model", "yolov8n.pt")),
             conf=float(detection_raw.get("conf", 0.4)),
-            classes=list(detection_raw.get("classes") or OUTDOOR_CLASSES),
+            classes=list(detection_raw.get("classes") or BUILDING_CLASSES),
             device=str(detection_raw.get("device", "cpu")),
+            drone_model=str(detection_raw.get("drone_model", "drone-yolo.pt")),
+            drone_conf=float(detection_raw.get("drone_conf", 0.3)),
         ),
         events=EventsConfig(
             pre_seconds=float(events_raw.get("pre_seconds", 2)),
@@ -245,6 +274,11 @@ def load_config(path: Path | None = None) -> AppConfig:
             ollama_model=str(vision_raw.get("ollama_model", "moondream")),
             openai_model=str(vision_raw.get("openai_model", "gpt-4o-mini")),
             timeout_seconds=float(vision_raw.get("timeout_seconds", 25)),
+        ),
+        monitoring=MonitoringConfig(
+            expected_classes=list(monitoring_raw.get("expected_classes") or EXPECTED_CLASSES),
+            alert_classes=list(monitoring_raw.get("alert_classes") or ALERT_CLASSES),
+            unattended_bags=bool(monitoring_raw.get("unattended_bags", True)),
         ),
         root=ROOT,
     )
@@ -318,5 +352,9 @@ def public_settings(cfg: AppConfig) -> dict[str, Any]:
         "vision": {
             "enabled": cfg.vision.enabled,
             "provider": cfg.vision.provider,
+        },
+        "monitoring": {
+            "expected_classes": cfg.monitoring.expected_classes,
+            "alert_classes": cfg.monitoring.alert_classes,
         },
     }

@@ -93,10 +93,10 @@ async def mjpeg_stream() -> StreamingResponse:
 
 
 @app.get("/api/events")
-def list_events(limit: int = 50) -> JSONResponse:
+def list_events(limit: int = 50, alerts: bool = False) -> JSONResponse:
     limit = max(1, min(limit, 200))
     events = []
-    for row in pipeline.store.list_events(limit):
+    for row in pipeline.store.list_events(limit, alerts_only=alerts):
         events.append(_event_json(row))
     return JSONResponse(events)
 
@@ -154,6 +154,8 @@ def _event_json(row: dict) -> dict:
         "thumb_url": f"/media/{thumb}" if thumb else None,
         "clip_url": f"/media/{clip}" if clip else None,
         "summary": row.get("summary") or "",
+        "anomaly": bool(row.get("anomaly")),
+        "anomaly_reason": row.get("anomaly_reason") or "",
     }
 
 
