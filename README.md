@@ -57,13 +57,19 @@ Python should print 3.12.x. If `python` is missing, try `py -3.12`. If PowerShel
 
 ### macOS
 
-Install [Homebrew](https://brew.sh) if you do not have it, then:
+macOS does **not** ship a `python` command (`zsh: command not found: python` is expected). Use `python3.12` until the venv is activated; after `source .venv/bin/activate`, `python` works.
+
+If `brew` itself is missing, install [Homebrew](https://brew.sh), then open a **new** Terminal tab and run:
 
 ```bash
 brew install git python@3.12 ffmpeg
+echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
+eval "$(/opt/homebrew/bin/brew shellenv)"
 python3.12 --version
 ffmpeg -version
 ```
+
+On Intel Macs Homebrew lives at `/usr/local` instead of `/opt/homebrew`; `brew shellenv` still puts the right paths on `PATH`. You want `Python 3.12.x` from that `--version` check.
 
 ### Linux (Debian / Ubuntu)
 
@@ -116,6 +122,7 @@ To use a webcam or RTSP later, set `camera.source` in `config.yaml` to `0`, a UR
 ## Run
 
 ```bash
+source .venv/bin/activate   # required on Mac: creates the `python` command
 python -m app.main
 ```
 
@@ -151,7 +158,7 @@ The API listens on http://127.0.0.1:8000. First run downloads `yolov8n.pt` into 
 In another terminal:
 
 ```bash
-curl -s http://127.0.0.1:8000/health | python -m json.tool
+curl -s http://127.0.0.1:8000/health | python3.12 -m json.tool
 ```
 
 Expect `"status": "ok"` and `"opened": true`. `fps` is ingest rate (the looping sample is paced near the file's native fps). `last_error` should be `null`.
@@ -178,7 +185,7 @@ Detection runs only when motion is present, and only allow-listed classes (`pers
 Poll until the list is non-empty (cooldown between events is 8 seconds):
 
 ```bash
-curl -s 'http://127.0.0.1:8000/api/events?limit=5' | python -m json.tool
+curl -s 'http://127.0.0.1:8000/api/events?limit=5' | python3.12 -m json.tool
 ```
 
 A good event looks like:
@@ -197,6 +204,7 @@ Point `camera.source` in `config.yaml` at `0` (webcam), an RTSP/HTTP URL, or ano
 
 ### Gotchas
 
+- `zsh: command not found: python` on a Mac — use `python3.12` until the venv is on (`source .venv/bin/activate`). Apple does not provide `python`.
 - `RuntimeError: operator torchvision::nms does not exist` — `torch` and `torchvision` are ABI-mismatched. Reinstall CPU wheels: `pip install --force-reinstall --no-deps torchvision --index-url https://download.pytorch.org/whl/cpu`.
 - Live boxes / `last_detections` are transient. Prefer `/api/events` and a saved clip over a single screenshot of `/`.
 - Empty events after a minute: check `/health` `last_error`, that `data/sample.mp4` exists, and that `detection.classes` still includes `person`.
