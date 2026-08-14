@@ -40,7 +40,7 @@ Download a short sample clip (people walking) so you can run without a camera:
 python scripts/download_sample.py
 ```
 
-Or point `camera.source` in `config.yaml` at an RTSP URL, HTTP stream, local file, or camera index (`0`).
+Or point `camera.source` in `config.yaml` at an RTSP URL, HTTP stream, local file, or camera index (`0`). The live page can also change source and model without editing the file.
 
 ## Run
 
@@ -56,17 +56,20 @@ Then open http://127.0.0.1:8000 — live view — and http://127.0.0.1:8000/even
 | `GET /api/frame.jpg` | latest JPEG (with overlay) |
 | `GET /api/stream.mjpg` | live MJPEG |
 | `GET /api/events` | recent events JSON |
+| `GET /api/settings` | current video source and YOLO model |
+| `PUT /api/settings` | set source/model, persist, restart pipeline |
 | `GET /media/...` | thumbs and clips |
 
 YOLO downloads `yolov8n.pt` on first detection run.
 
 ## Config keys
 
-See [`config.yaml`](config.yaml):
+See [`config.yaml`](config.yaml). The live page **Apply** button writes `data/settings.json`, which overrides `camera.source` and `detection.model` until you delete that file.
 
-- `camera.source` — file, URL, or index; files loop when `loop_file` is true
+- `camera.source` — file, URL, or index; files loop when `loop_file` is true. Also editable on the live page.
 - `pipeline.detect_fps` — detection rate; extra frames are dropped
 - `motion.min_area` — ignore small pixel changes
+- `detection.model` — Ultralytics weights (`yolov8n.pt` by default). Also editable on the live page.
 - `detection.classes` — allowlist (default `person`, `car`, `dog`, `cat`)
 - `events.pre_seconds` / `post_seconds` / `cooldown_seconds` — clip window and anti-flood
 - `events.retention_days` — delete old events, thumbs, and clips

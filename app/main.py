@@ -2,13 +2,21 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
-from app.config import load_config
+from app.config import (
+    SettingsError,
+    load_config,
+    parse_settings_update,
+    public_settings,
+    save_runtime_settings,
+)
 from app.pipeline import Pipeline
 
 logging.basicConfig(
@@ -19,6 +27,12 @@ log = logging.getLogger("tundranvr")
 
 cfg = load_config()
 pipeline = Pipeline(cfg)
+_settings_lock = threading.Lock()
+
+
+class SettingsUpdate(BaseModel):
+    source: str = Field(min_length=1, max_length=2000)
+    model: str = Field(min_length=1, max_length=500)
 
 
 @asynccontextmanager
@@ -89,6 +103,29 @@ def get_event(event_id: int) -> JSONResponse:
     if not row:
         raise HTTPException(status_code=404, detail="event not found")
     return JSONResponse(_event_json(row))
+
+
+@app.get("/api/settings")
+def get_settings() -> dict:
+    return public_settings(cfg)
+
+
+@app.put("/api/settings")
+def update_settings(body: SettingsUpdate) -> dict:
+    global cfg, pipeline
+    try:
+        source, model = parse_settings_update(body.source, body.model)
+    except SettingsError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    with _settings_lock:
+        save_runtime_settings(source=source, model=model)
+        log.info("Applying settings source=%s model=%s", source, model)
+        old = pipeline
+        old.stop()
+        cfg = load_config()
+        pipeline = Pipeline(cfg)
+        pipeline.start()
+    return public_settings(cfg)
 
 
 @app.get("/")

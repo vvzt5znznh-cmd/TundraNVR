@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +9,19 @@ import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = ROOT / "config.yaml"
+SETTINGS_PATH = ROOT / "data" / "settings.json"
+
+SUGGESTED_MODELS = [
+    "yolov8n.pt",
+    "yolov8s.pt",
+    "yolov8m.pt",
+    "yolo11n.pt",
+    "yolo11s.pt",
+]
+
+
+class SettingsError(ValueError):
+    """Invalid live-settings payload."""
 
 
 def _as_source(value: Any) -> str | int:
@@ -157,7 +171,59 @@ def load_config(path: Path | None = None) -> AppConfig:
         ),
         root=ROOT,
     )
+    overlay = _load_overlay()
+    camera_overlay = overlay.get("camera") or {}
+    detection_overlay = overlay.get("detection") or {}
+    if "source" in camera_overlay:
+        cfg.camera.source = _as_source(camera_overlay["source"])
+    if "model" in detection_overlay:
+        cfg.detection.model = str(detection_overlay["model"]).strip() or cfg.detection.model
     cfg.data_dir.mkdir(parents=True, exist_ok=True)
     cfg.clips_dir.mkdir(parents=True, exist_ok=True)
     cfg.thumbs_dir.mkdir(parents=True, exist_ok=True)
     return cfg
+
+
+def _load_overlay() -> dict[str, Any]:
+    if not SETTINGS_PATH.exists():
+        return {}
+    try:
+        data = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_runtime_settings(*, source: str | int, model: str) -> None:
+    SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "camera": {"source": source},
+        "detection": {"model": model},
+    }
+    SETTINGS_PATH.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+def parse_settings_update(source: str, model: str) -> tuple[str | int, str]:
+    source_text = (source or "").strip()
+    model_text = (model or "").strip()
+    if not source_text:
+        raise SettingsError("source is required")
+    if not model_text:
+        raise SettingsError("model is required")
+    if any(ch in model_text for ch in "\n\r"):
+        raise SettingsError("invalid model")
+    parsed = _as_source(source_text)
+    if isinstance(parsed, str) and "://" not in parsed:
+        path = Path(parsed)
+        resolved = path if path.is_absolute() else ROOT / path
+        if not resolved.exists():
+            raise SettingsError(f"source file not found: {resolved}")
+    return parsed, model_text
+
+
+def public_settings(cfg: AppConfig) -> dict[str, Any]:
+    return {
+        "source": str(cfg.camera.source),
+        "model": cfg.detection.model,
+        "suggested_models": SUGGESTED_MODELS,
+    }
