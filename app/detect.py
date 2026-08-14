@@ -187,6 +187,7 @@ def draw_overlay(
     detections: list[Detection],
     motion_area: int | None = None,
     has_motion: bool = False,
+    banner: str = "",
 ) -> np.ndarray:
     vis = frame.copy()
     for det in detections:
@@ -206,16 +207,59 @@ def draw_overlay(
             1,
             cv2.LINE_AA,
         )
-    status = f"motion={'yes' if has_motion else 'no'}"
-    if motion_area is not None:
+    status = banner or f"motion={'yes' if has_motion else 'no'}"
+    if not banner and motion_area is not None:
         status += f" area={motion_area}"
     cv2.putText(
         vis,
-        status,
+        status[:72],
         (10, 24),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.7,
+        0.62,
         (240, 240, 240),
+        2,
+        cv2.LINE_AA,
+    )
+    return vis
+
+
+def draw_edge_overlay(
+    frame: np.ndarray,
+    grid: np.ndarray | None,
+    usual_grid: np.ndarray | None,
+    has_motion: bool,
+    score: float,
+    unusual: bool,
+    reason: str,
+) -> np.ndarray:
+    vis = frame.copy()
+    h, w = vis.shape[:2]
+    overlay = vis.copy()
+    grid_arr = grid if grid is not None else np.zeros((8, 8), dtype=np.float32)
+    usual = usual_grid if usual_grid is not None else np.zeros((8, 8), dtype=np.float32)
+    gh, gw = grid_arr.shape[:2]
+    for y in range(gh):
+        for x in range(gw):
+            x1, y1 = int(x * w / gw), int(y * h / gh)
+            x2, y2 = int((x + 1) * w / gw), int((y + 1) * h / gh)
+            freq = float(usual[y, x]) if usual.shape == grid_arr.shape else 0.0
+            motion = float(grid_arr[y, x])
+            if freq > 0.08:
+                cv2.rectangle(overlay, (x1, y1), (x2, y2), (70, 150, 70), -1)
+            if motion > 0.12:
+                color = (0, 140, 255) if freq < 0.08 else (40, 200, 90)
+                cv2.rectangle(overlay, (x1, y1), (x2, y2), color, -1)
+            cv2.rectangle(vis, (x1, y1), (x2, y2), (40, 40, 40), 1)
+    vis = cv2.addWeighted(overlay, 0.32, vis, 0.68, 0)
+    label = "unusual" if unusual else ("motion" if has_motion else "quiet")
+    banner = f"Edge {label}  {score:.2f}  {reason}"
+    cv2.putText(
+        vis,
+        banner[:78],
+        (10, 28),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.62,
+        (245, 245, 245),
         2,
         cv2.LINE_AA,
     )

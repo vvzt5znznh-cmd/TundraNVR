@@ -21,13 +21,13 @@
   <main class="wrap">
     <div class="log-toolbar">
       <div>
-        <p class="kicker">Log</p>
-        <h2>What happened</h2>
-        <p class="lede">Each clip is a moment the camera named something. Alerts are drones, aircraft, unattended bags, or anything unexpected.</p>
+        <p class="kicker">Operator</p>
+        <h2>Confirm or dismiss</h2>
+        <p class="lede">Packets that reached Node or Hub. Dismiss folds the moment into this camera’s Pattern of Life. Confirm keeps it as a real incident.</p>
       </div>
       <div class="toggle" role="group" aria-label="Filter">
         <button type="button" id="allBtn" class="on">All</button>
-        <button type="button" id="alertBtn">Alerts</button>
+        <button type="button" id="alertBtn">Needs operator</button>
       </div>
     </div>
     <section class="grid-2">
@@ -37,7 +37,13 @@
       <aside class="player panel">
         <video id="player" controls playsinline></video>
         <p class="lede" id="detail" style="margin-top:12px">Select a moment to play the clip.</p>
+        <ol class="handoff compact" id="detailHandoff"></ol>
         <p id="summary" style="margin:12px 0 0; font-size:15px;"></p>
+        <div class="review" id="review">
+          <button type="button" class="btn" id="confirmBtn">This was real</button>
+          <button type="button" class="ghost" id="dismissBtn">This was fine</button>
+          <p class="lede" id="reviewMsg" style="margin-top:10px"></p>
+        </div>
       </aside>
     </section>
   </main>
@@ -48,8 +54,10 @@
     const summaryEl = document.getElementById("summary");
     const allBtn = document.getElementById("allBtn");
     const alertBtn = document.getElementById("alertBtn");
+    const reviewMsg = document.getElementById("reviewMsg");
     let alertsOnly = false;
     let events = [];
+    let selected = null;
 
     function esc(value) {
       return String(value || "")
@@ -75,7 +83,29 @@
       return classes.join(", ");
     }
 
+    function stopLabel(event) {
+      const at = event.stopped_at || "";
+      if (event.operator_status) return event.operator_status;
+      if (at === "operator") return "needs you";
+      if (at === "hub") return "hub";
+      if (at === "node") return "node closed";
+      return at || "";
+    }
+
+    function renderHandoff(event) {
+      const el = document.getElementById("detailHandoff");
+      const steps = (event.handoff && event.handoff.steps) || [];
+      if (!steps.length) {
+        el.innerHTML = "";
+        return;
+      }
+      el.innerHTML = steps.map((s) =>
+        `<li><span class="step ${esc(s.decision)}"><b>${esc(s.label)}</b> ${esc(s.decision)}</span></li>`
+      ).join("");
+    }
+
     function play(event) {
+      selected = event;
       for (const btn of rowsEl.querySelectorAll(".log-item")) btn.classList.remove("active");
       const row = document.getElementById("evt-" + event.id);
       if (row) row.classList.add("active");
@@ -83,14 +113,24 @@
         player.src = event.clip_url;
         player.play().catch(() => {});
       }
-      detail.textContent = `${fmt(event.ts_start)} · ${(event.classes || []).join(", ") || "no labels"}`;
+      const stop = stopLabel(event);
+      detail.textContent = `${fmt(event.ts_start)} · ${(event.classes || []).join(", ") || "no labels"} · ${stop}`;
       const flag = event.anomaly ? `Alert: ${event.anomaly_reason || "unusual activity"}. ` : "";
       summaryEl.textContent = flag + (event.summary || "Note not ready yet — refresh in a few seconds.");
+      renderHandoff(event);
+      const reviewed = event.operator_status === "confirmed" || event.operator_status === "dismissed";
+      document.getElementById("confirmBtn").disabled = reviewed;
+      document.getElementById("dismissBtn").disabled = reviewed;
+      reviewMsg.textContent = reviewed
+        ? (event.operator_status === "dismissed"
+          ? "Dismissed — folded into Pattern of Life."
+          : "Confirmed — kept as a real incident.")
+        : "Dismiss teaches Edge this was ordinary. Confirm does not.";
     }
 
     function render() {
       if (!events.length) {
-        rowsEl.innerHTML = `<p class="empty">${alertsOnly ? "No alerts yet." : "Nothing logged yet. Leave the monitor running."}</p>`;
+        rowsEl.innerHTML = `<p class="empty">${alertsOnly ? "Nothing waiting for an operator." : "Nothing logged yet. Leave the monitor running — Edge uploads while it learns."}</p>`;
         return;
       }
       rowsEl.innerHTML = events.map((e) => `
@@ -98,9 +138,9 @@
           ${e.thumb_url ? `<img class="thumb" src="${e.thumb_url}" alt="" />` : "<span></span>"}
           <div>
             <h3>${esc(headline(e))}</h3>
-            <p class="meta">${esc(fmt(e.ts_start))}</p>
+            <p class="meta">${esc(fmt(e.ts_start))} · ${esc(stopLabel(e))}</p>
           </div>
-          ${e.anomaly ? `<span class="badge">${esc(e.anomaly_reason || "alert")}</span>` : "<span></span>"}
+          ${e.anomaly || e.operator_status === "pending" ? `<span class="badge">${esc(e.anomaly_reason || stopLabel(e) || "alert")}</span>` : "<span></span>"}
         </button>
       `).join("");
       for (const e of events) {
@@ -115,6 +155,26 @@
       render();
     }
 
+    async function review(action) {
+      if (!selected) return;
+      reviewMsg.textContent = action === "dismiss" ? "Teaching Edge this was fine…" : "Marking as real…";
+      const res = await fetch("/api/events/" + selected.id + "/review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        reviewMsg.textContent = data.detail || "Could not save review.";
+        return;
+      }
+      selected = data;
+      events = events.map((e) => (e.id === data.id ? data : e));
+      render();
+      const again = events.find((e) => e.id === data.id);
+      if (again) play(again);
+    }
+
     allBtn.addEventListener("click", () => {
       alertsOnly = false;
       allBtn.classList.add("on");
@@ -127,6 +187,8 @@
       allBtn.classList.remove("on");
       loadEvents();
     });
+    document.getElementById("confirmBtn").addEventListener("click", () => review("confirm"));
+    document.getElementById("dismissBtn").addEventListener("click", () => review("dismiss"));
 
     loadEvents();
     fetch("/health")

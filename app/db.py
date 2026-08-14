@@ -34,7 +34,13 @@ class EventStore:
                     clip_path TEXT,
                     summary TEXT,
                     anomaly INTEGER DEFAULT 0,
-                    anomaly_reason TEXT
+                    anomaly_reason TEXT,
+                    source TEXT,
+                    pol_score REAL,
+                    stopped_at TEXT,
+                    handoff TEXT,
+                    features TEXT,
+                    operator_status TEXT
                 )
                 """
             )
@@ -42,12 +48,19 @@ class EventStore:
                 row[1]
                 for row in self._conn.execute("PRAGMA table_info(events)").fetchall()
             }
-            if "summary" not in cols:
-                self._conn.execute("ALTER TABLE events ADD COLUMN summary TEXT")
-            if "anomaly" not in cols:
-                self._conn.execute("ALTER TABLE events ADD COLUMN anomaly INTEGER DEFAULT 0")
-            if "anomaly_reason" not in cols:
-                self._conn.execute("ALTER TABLE events ADD COLUMN anomaly_reason TEXT")
+            for name, ddl in (
+                ("summary", "ALTER TABLE events ADD COLUMN summary TEXT"),
+                ("anomaly", "ALTER TABLE events ADD COLUMN anomaly INTEGER DEFAULT 0"),
+                ("anomaly_reason", "ALTER TABLE events ADD COLUMN anomaly_reason TEXT"),
+                ("source", "ALTER TABLE events ADD COLUMN source TEXT"),
+                ("pol_score", "ALTER TABLE events ADD COLUMN pol_score REAL"),
+                ("stopped_at", "ALTER TABLE events ADD COLUMN stopped_at TEXT"),
+                ("handoff", "ALTER TABLE events ADD COLUMN handoff TEXT"),
+                ("features", "ALTER TABLE events ADD COLUMN features TEXT"),
+                ("operator_status", "ALTER TABLE events ADD COLUMN operator_status TEXT"),
+            ):
+                if name not in cols:
+                    self._conn.execute(ddl)
             self._conn.commit()
 
     def insert(
@@ -60,15 +73,22 @@ class EventStore:
         clip_path: str | None,
         anomaly: bool = False,
         anomaly_reason: str = "",
+        source: str = "",
+        pol_score: float | None = None,
+        stopped_at: str = "",
+        handoff: dict[str, Any] | None = None,
+        features: dict[str, Any] | None = None,
+        operator_status: str = "",
     ) -> int:
         with self._lock:
             cur = self._conn.execute(
                 """
                 INSERT INTO events (
                     ts_start, ts_end, classes, score, thumb_path, clip_path,
-                    anomaly, anomaly_reason
+                    anomaly, anomaly_reason, source, pol_score, stopped_at,
+                    handoff, features, operator_status
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     ts_start,
@@ -79,6 +99,12 @@ class EventStore:
                     clip_path,
                     1 if anomaly else 0,
                     anomaly_reason or None,
+                    source or None,
+                    pol_score,
+                    stopped_at or None,
+                    json.dumps(handoff) if handoff is not None else None,
+                    json.dumps(features) if features is not None else None,
+                    operator_status or None,
                 ),
             )
             self._conn.commit()
@@ -91,6 +117,25 @@ class EventStore:
                 (summary, event_id),
             )
             self._conn.commit()
+
+    def update_review(self, event_id: int, operator_status: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM events WHERE id = ?",
+                (event_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            self._conn.execute(
+                "UPDATE events SET operator_status = ? WHERE id = ?",
+                (operator_status, event_id),
+            )
+            self._conn.commit()
+            row = self._conn.execute(
+                "SELECT * FROM events WHERE id = ?",
+                (event_id,),
+            ).fetchone()
+        return self._row_to_dict(row) if row else None
 
     def list_events(self, limit: int = 50, alerts_only: bool = False) -> list[dict[str, Any]]:
         with self._lock:
@@ -140,7 +185,23 @@ class EventStore:
             data["classes"] = []
         data["anomaly"] = bool(data.get("anomaly"))
         data["anomaly_reason"] = data.get("anomaly_reason") or ""
+        data["source"] = data.get("source") or ""
+        data["stopped_at"] = data.get("stopped_at") or ""
+        data["operator_status"] = data.get("operator_status") or ""
+        data["handoff"] = _load_json(data.get("handoff"), {})
+        data["features"] = _load_json(data.get("features"), {})
         return data
+
+
+def _load_json(value: Any, default: Any) -> Any:
+    if value in (None, ""):
+        return default
+    if isinstance(value, (dict, list)):
+        return value
+    try:
+        return json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return default
 
 
 def utc_now() -> str:

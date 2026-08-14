@@ -18,6 +18,8 @@ data/clips/*
 data/thumbs/*
 !data/thumbs/.gitkeep
 data/settings.json
+data/pol/*.json
+!data/pol/.gitkeep
 
 # OS / editor
 .DS_Store

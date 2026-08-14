@@ -13,11 +13,12 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from app.anomaly import classify_anomaly
+from app.anomaly import classify_anomaly, normalize_class
 from app.config import AppConfig
 from app.db import EventStore, utc_now
-from app.detect import Detection, ObjectDetector, draw_overlay
+from app.detect import Detection, ObjectDetector, draw_edge_overlay, draw_overlay
 from app.motion import MotionDetector
+from app.pol import PatternOfLife, absorb_into_file
 from app.record import ClipWriter, cleanup_old_events, save_thumb
 from app.vision import describe_event, fallback_summary
 
@@ -43,6 +44,7 @@ class PipelineStatus:
     last_detections: list[dict] = field(default_factory=list)
     last_scene: str = ""
     last_anomaly: str = ""
+    last_handoff: dict = field(default_factory=dict)
     last_error: str | None = None
     reconnects: int = 0
     started_at: float = 0.0
@@ -58,6 +60,14 @@ class _ActiveEvent:
     clip_name: str
     thumb_name: str
     ts_start: str
+    hub_needed: bool = False
+    page_operator: bool = False
+    anomaly_reason: str = ""
+    pol_score: float = 0.0
+    stopped_at: str = "node"
+    handoff: dict = field(default_factory=dict)
+    features: dict = field(default_factory=dict)
+    source: str = ""
 
 
 class Pipeline:
@@ -77,6 +87,7 @@ class Pipeline:
             drone_conf=cfg.detection.drone_conf,
         )
         self.store = EventStore(cfg.db_path)
+        self.pol = PatternOfLife(cfg.pol_dir, cfg.camera.source)
         self.status = PipelineStatus(source=str(cfg.resolved_source()))
         self._lock = threading.Lock()
         self._event_lock = threading.Lock()
@@ -94,6 +105,15 @@ class Pipeline:
         ring_len = max(1, int(cfg.events.pre_seconds * clip_fps) + 1)
         self._ring: deque[np.ndarray] = deque(maxlen=ring_len)
         self._overlay_ttl = max(0.4, overlay_ttl)
+        self._jpeg_edge = b""
+        self._jpeg_node = b""
+        self._jpeg_hub = b""
+        self._motion_grid = np.zeros((8, 8), dtype=np.float32)
+        self._usual_grid = np.zeros((8, 8), dtype=np.float32)
+        self._last_pol_score = 0.0
+        self._last_pol_unusual = False
+        self._last_pol_reason = ""
+        self._hub_banner = ""
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -112,11 +132,20 @@ class Pipeline:
             self._thread.join(timeout=8)
         with self._event_lock:
             self._finalize_event()
+        try:
+            self.pol.close()
+        except Exception:
+            log.exception("Failed to save Pattern of Life profile")
         log.info("Pipeline stopped")
 
-    def latest_jpeg(self) -> bytes:
+    def latest_jpeg(self, seat: str = "node") -> bytes:
         with self._lock:
-            return self._latest_jpeg
+            key = (seat or "node").lower()
+            if key in {"edge", "raspberry"}:
+                return self._jpeg_edge or self._latest_jpeg
+            if key == "hub":
+                return self._jpeg_hub or self._latest_jpeg
+            return self._jpeg_node or self._latest_jpeg
 
     def health(self) -> dict:
         with self._lock:
@@ -131,10 +160,34 @@ class Pipeline:
                 "last_detections": list(self.status.last_detections),
                 "last_scene": self.status.last_scene,
                 "last_anomaly": self.status.last_anomaly,
+                "handoff": dict(self.status.last_handoff),
+                "pol": self.pol.snapshot(),
                 "last_error": self.status.last_error,
                 "reconnects": self.status.reconnects,
                 "uptime_s": round(uptime, 1),
             }
+
+    def review_event(self, event_id: int, action: str) -> dict | None:
+        action = (action or "").strip().lower()
+        if action not in {"confirm", "dismiss"}:
+            raise ValueError("action must be confirm or dismiss")
+        row = self.store.get(event_id)
+        if not row:
+            return None
+        status = "confirmed" if action == "confirm" else "dismissed"
+        updated = self.store.update_review(event_id, status)
+        if action == "dismiss":
+            features = row.get("features") or {}
+            source = row.get("source") or str(self.cfg.camera.source)
+            if features:
+                try:
+                    if source == str(self.cfg.camera.source):
+                        self.pol.absorb(features)
+                    else:
+                        absorb_into_file(self.cfg.pol_dir, source, features)
+                except Exception:
+                    log.exception("Failed to fold dismissal into PoL")
+        return updated
 
     def _run(self) -> None:
         try:
@@ -325,17 +378,47 @@ class Pipeline:
 
     def _publish_live(self, frame: np.ndarray, now: float) -> None:
         dets = self._last_dets if now <= self._overlay_until else []
-        vis = draw_overlay(frame, dets, self._motion_area, self._has_motion)
-        jpeg = _encode_jpeg(vis, self.cfg.pipeline.jpeg_quality)
+        edge = draw_edge_overlay(
+            frame,
+            self._motion_grid,
+            self._usual_grid,
+            self._has_motion,
+            self._last_pol_score,
+            self._last_pol_unusual,
+            self._last_pol_reason,
+        )
+        node_banner = "Node · Edge kept this locally"
+        if dets:
+            node_banner = "Node · " + ", ".join(f"{d.cls} {d.conf:.2f}" for d in dets[:3])
+        elif self._has_motion:
+            node_banner = "Node · waiting for an Edge upload"
+        node = draw_overlay(frame, dets, self._motion_area, self._has_motion, banner=node_banner)
+        hub_dets = dets if self._hub_banner else []
+        hub_banner = self._hub_banner or "Hub idle — waiting for Node to escalate"
+        hub = draw_overlay(frame, hub_dets, self._motion_area, self._has_motion, banner=hub_banner[:72])
+        jpeg_edge = _encode_jpeg(edge, self.cfg.pipeline.jpeg_quality)
+        jpeg_node = _encode_jpeg(node, self.cfg.pipeline.jpeg_quality)
+        jpeg_hub = _encode_jpeg(hub, self.cfg.pipeline.jpeg_quality)
         with self._lock:
-            self._latest_jpeg = jpeg
+            self._jpeg_edge = jpeg_edge
+            self._jpeg_node = jpeg_node
+            self._jpeg_hub = jpeg_hub
+            self._latest_jpeg = jpeg_node
             self.status.last_motion = self._has_motion
             self.status.motion_area = self._motion_area
 
     def _process_detect(self, frame: np.ndarray, now: float) -> None:
-        has_motion, area = self.motion.measure(frame)
+        has_motion, area, grid = self.motion.measure(frame)
         self._has_motion = has_motion
         self._motion_area = area
+        self._motion_grid = grid
+        pol, features = self.pol.observe(frame, grid, area, has_motion)
+        ug = np.array(pol.usual_grid, dtype=np.float32)
+        self._usual_grid = ug if ug.shape == (8, 8) else np.zeros((8, 8), dtype=np.float32)
+        self._last_pol_score = pol.score
+        self._last_pol_unusual = pol.unusual
+        self._last_pol_reason = pol.reason
+
         detections: list[Detection] = []
         if has_motion:
             try:
@@ -344,31 +427,94 @@ class Pipeline:
                 log.exception("Detection failed: %s", exc)
                 with self._lock:
                     self.status.last_error = f"detect: {exc}"
-        if detections:
+
+        alert_set = {normalize_class(c) for c in self.cfg.monitoring.alert_classes}
+        prior = any(normalize_class(d.cls) in alert_set for d in detections)
+        anomaly = classify_anomaly(
+            [d.cls for d in detections],
+            expected=self.cfg.monitoring.expected_classes,
+            alert=self.cfg.monitoring.alert_classes,
+            unattended_bags=self.cfg.monitoring.unattended_bags,
+        )
+        edge_upload = has_motion and (pol.unusual or not pol.confident)
+        policy_skip = prior or anomaly.flagged
+        node_received = bool(detections) and (edge_upload or policy_skip)
+        hub_needed = False
+        page_operator = False
+        hub_detail = ""
+        if node_received:
+            hub_needed = bool(policy_skip or pol.score >= 0.7)
+            page_operator = bool(policy_skip)
+            if hub_needed:
+                hub_detail = fallback_summary(
+                    sorted({d.cls for d in detections}),
+                    max(d.conf for d in detections),
+                    anomaly.reason,
+                )
+        handoff = _handoff_payload(
+            pol=pol,
+            has_motion=has_motion,
+            detections=detections,
+            prior=policy_skip,
+            node_received=node_received,
+            hub_needed=hub_needed,
+            page_operator=page_operator,
+            anomaly_reason=anomaly.reason,
+            hub_detail=hub_detail,
+        )
+        stopped = handoff["stopped_at"]
+
+        if node_received:
             self._last_dets = detections
             self._overlay_until = now + self._overlay_ttl
             payload = [{"cls": d.cls, "conf": round(d.conf, 3)} for d in detections]
-            classes = [d.cls for d in detections]
-            anomaly = classify_anomaly(
-                classes,
-                expected=self.cfg.monitoring.expected_classes,
-                alert=self.cfg.monitoring.alert_classes,
-                unattended_bags=self.cfg.monitoring.unattended_bags,
+            scene = hub_detail or fallback_summary(
+                sorted({d.cls for d in detections}),
+                max(d.conf for d in detections),
+                anomaly.reason,
             )
-            scene = fallback_summary(sorted(set(classes)), max(d.conf for d in detections), anomaly.reason)
+            self._hub_banner = ("Hub · " + hub_detail) if hub_needed else ""
             with self._lock:
                 self.status.last_detections = payload
                 self.status.last_scene = scene
-                self.status.last_anomaly = anomaly.reason
-            self._on_match(frame, detections, now)
+                self.status.last_anomaly = anomaly.reason if page_operator else ""
+                self.status.last_handoff = handoff
+            self._on_match(
+                frame,
+                detections,
+                now,
+                hub_needed=hub_needed,
+                page_operator=page_operator,
+                anomaly_reason=anomaly.reason,
+                pol_score=pol.score,
+                stopped_at=stopped,
+                handoff=handoff,
+                features=features,
+            )
         else:
+            self._hub_banner = ""
             with self._lock:
                 if now > self._overlay_until:
                     self.status.last_detections = []
                     self.status.last_anomaly = ""
-                    self.status.last_scene = ""
+                    self.status.last_scene = pol.reason if has_motion else "Quiet."
+                    self._last_dets = []
+                self.status.last_handoff = handoff
 
-    def _on_match(self, frame: np.ndarray, detections: list[Detection], now: float) -> None:
+    def _on_match(
+        self,
+        frame: np.ndarray,
+        detections: list[Detection],
+        now: float,
+        *,
+        hub_needed: bool,
+        page_operator: bool,
+        anomaly_reason: str,
+        pol_score: float,
+        stopped_at: str,
+        handoff: dict,
+        features: dict,
+    ) -> None:
         classes = {d.cls for d in detections}
         score = max(d.conf for d in detections)
         with self._event_lock:
@@ -376,10 +522,30 @@ class Pipeline:
                 self._active.last_match_at = now
                 self._active.classes.update(classes)
                 self._active.score = max(self._active.score, score)
+                self._active.hub_needed = self._active.hub_needed or hub_needed
+                self._active.page_operator = self._active.page_operator or page_operator
+                if anomaly_reason:
+                    self._active.anomaly_reason = anomaly_reason
+                self._active.pol_score = max(self._active.pol_score, pol_score)
+                self._active.stopped_at = stopped_at
+                self._active.handoff = handoff
                 return
             if now < self._cooldown_until:
                 return
-            self._start_event(frame, detections, now, classes, score)
+            self._start_event(
+                frame,
+                detections,
+                now,
+                classes,
+                score,
+                hub_needed=hub_needed,
+                page_operator=page_operator,
+                anomaly_reason=anomaly_reason,
+                pol_score=pol_score,
+                stopped_at=stopped_at,
+                handoff=handoff,
+                features=features,
+            )
 
     def _start_event(
         self,
@@ -388,6 +554,14 @@ class Pipeline:
         now: float,
         classes: set[str],
         score: float,
+        *,
+        hub_needed: bool,
+        page_operator: bool,
+        anomaly_reason: str,
+        pol_score: float,
+        stopped_at: str,
+        handoff: dict,
+        features: dict,
     ) -> None:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
         clip_name = f"{stamp}.mp4"
@@ -418,8 +592,16 @@ class Pipeline:
             clip_name=clip_name,
             thumb_name=thumb_name,
             ts_start=utc_now(),
+            hub_needed=hub_needed,
+            page_operator=page_operator,
+            anomaly_reason=anomaly_reason,
+            pol_score=pol_score,
+            stopped_at=stopped_at,
+            handoff=handoff,
+            features=features,
+            source=str(self.cfg.camera.source),
         )
-        log.info("Event started classes=%s score=%.2f", sorted(classes), score)
+        log.info("Event started classes=%s score=%.2f stop=%s", sorted(classes), score, stopped_at)
 
     def _finalize_event(self) -> None:
         active = self._active
@@ -433,12 +615,17 @@ class Pipeline:
         event_id = None
         classes = sorted(active.classes)
         score = round(active.score, 3)
-        anomaly = classify_anomaly(
-            classes,
-            expected=self.cfg.monitoring.expected_classes,
-            alert=self.cfg.monitoring.alert_classes,
-            unattended_bags=self.cfg.monitoring.unattended_bags,
-        )
+        anomaly_flag = active.page_operator
+        anomaly_reason = active.anomaly_reason
+        if not anomaly_reason and anomaly_flag:
+            anomaly_reason = "escalated to operator"
+        operator_status = "pending" if active.page_operator else ""
+        node_note = ""
+        if active.hub_needed:
+            node_note = fallback_summary(classes, score, anomaly_reason)
+        else:
+            labels = ", ".join(classes) if classes else "motion"
+            node_note = f"Named {labels}. Node closed this without asking Hub."
         try:
             event_id = self.store.insert(
                 ts_start=active.ts_start,
@@ -447,23 +634,31 @@ class Pipeline:
                 score=score,
                 thumb_path=f"thumbs/{active.thumb_name}",
                 clip_path=f"clips/{active.clip_name}",
-                anomaly=anomaly.flagged,
-                anomaly_reason=anomaly.reason,
+                anomaly=anomaly_flag,
+                anomaly_reason=anomaly_reason,
+                source=active.source,
+                pol_score=round(active.pol_score, 3),
+                stopped_at=active.stopped_at,
+                handoff=active.handoff,
+                features=active.features,
+                operator_status=operator_status,
             )
+            self.store.update_summary(event_id, node_note)
         except Exception:
             log.exception("Failed to persist event")
         self._cooldown_until = time.monotonic() + self.cfg.events.cooldown_seconds
         log.info(
-            "Event saved %s anomaly=%s %s",
+            "Event saved %s stop=%s anomaly=%s %s",
             active.clip_name,
-            anomaly.flagged,
-            anomaly.reason,
+            active.stopped_at,
+            anomaly_flag,
+            anomaly_reason,
         )
-        if event_id:
+        if event_id and active.hub_needed:
             thumb = self.cfg.thumbs_dir / active.thumb_name
             threading.Thread(
                 target=self._describe_event,
-                args=(event_id, thumb, classes, score, anomaly.reason),
+                args=(event_id, thumb, classes, score, anomaly_reason),
                 name=f"nvr-vision-{event_id}",
                 daemon=True,
             ).start()
@@ -488,3 +683,148 @@ class Pipeline:
             log.info("Event %s described via %s", event_id, provider)
         except Exception:
             log.exception("Vision summary failed for event %s", event_id)
+
+
+def _handoff_payload(
+    *,
+    pol,
+    has_motion: bool,
+    detections: list[Detection],
+    prior: bool,
+    node_received: bool,
+    hub_needed: bool,
+    page_operator: bool,
+    anomaly_reason: str,
+    hub_detail: str,
+) -> dict:
+    if not has_motion:
+        edge_decision = "quiet"
+        edge_detail = "no motion"
+    elif pol.unusual or not pol.confident:
+        edge_decision = "unusual"
+        edge_detail = f"{pol.score:.2f} · {pol.reason}"
+    else:
+        edge_decision = "usual"
+        edge_detail = f"{pol.score:.2f} · {pol.reason}"
+        if prior:
+            edge_detail += " · policy skip to Node"
+
+    labels = ", ".join(f"{d.cls} {d.conf:.2f}" for d in detections[:4]) or "unnamed"
+    steps = [
+        {
+            "stage": "edge",
+            "label": "Raspberry",
+            "decision": edge_decision,
+            "detail": edge_detail,
+        }
+    ]
+    if not node_received:
+        steps.append(
+            {
+                "stage": "node",
+                "label": "Node",
+                "decision": "skipped",
+                "detail": "Edge kept this locally",
+            }
+        )
+        steps.append(
+            {
+                "stage": "hub",
+                "label": "Hub",
+                "decision": "skipped",
+                "detail": "Node did not send a packet",
+            }
+        )
+        steps.append(
+            {
+                "stage": "operator",
+                "label": "Operator",
+                "decision": "skipped",
+                "detail": "",
+            }
+        )
+        stopped = "edge"
+    else:
+        if hub_needed:
+            node_detail = f"{labels} · send to Hub"
+            node_decision = "escalate"
+        else:
+            node_detail = f"{labels} · named and closed"
+            node_decision = "closed"
+        steps.append(
+            {
+                "stage": "node",
+                "label": "Node",
+                "decision": node_decision,
+                "detail": node_detail,
+            }
+        )
+        if hub_needed:
+            hub_decision = "alert" if page_operator else "log"
+            steps.append(
+                {
+                    "stage": "hub",
+                    "label": "Hub",
+                    "decision": hub_decision,
+                    "detail": (hub_detail or anomaly_reason or labels)[:160],
+                }
+            )
+            if page_operator:
+                steps.append(
+                    {
+                        "stage": "operator",
+                        "label": "Operator",
+                        "decision": "needed",
+                        "detail": "confirm or dismiss",
+                    }
+                )
+                stopped = "operator"
+            else:
+                steps.append(
+                    {
+                        "stage": "operator",
+                        "label": "Operator",
+                        "decision": "skipped",
+                        "detail": "Hub logged without paging",
+                    }
+                )
+                stopped = "hub"
+        else:
+            steps.append(
+                {
+                    "stage": "hub",
+                    "label": "Hub",
+                    "decision": "skipped",
+                    "detail": "Node closed this",
+                }
+            )
+            steps.append(
+                {
+                    "stage": "operator",
+                    "label": "Operator",
+                    "decision": "skipped",
+                    "detail": "",
+                }
+            )
+            stopped = "node"
+
+    edge_info = pol.as_dict()
+    edge_info["upload"] = bool(node_received and edge_decision != "quiet" and (pol.unusual or not pol.confident))
+    edge_info["prior_skip"] = bool(prior and not (pol.unusual or not pol.confident))
+    return {
+        "stopped_at": stopped,
+        "steps": steps,
+        "edge": edge_info,
+        "node": {
+            "received": node_received,
+            "closed": node_received and not hub_needed,
+            "prior": prior,
+            "classes": [{"cls": d.cls, "conf": round(d.conf, 3)} for d in detections],
+        },
+        "hub": {
+            "ran": hub_needed,
+            "page_operator": page_operator,
+            "detail": hub_detail,
+        },
+    }
+

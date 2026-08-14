@@ -86,6 +86,133 @@ nav a {
 nav a:hover { color: var(--ink); background: var(--chip); }
 nav a.active { color: var(--pine); background: #dce8e2; }
 
+.seats {
+  display: flex;
+  background: var(--chip);
+  border-radius: 999px;
+  padding: 3px;
+  gap: 2px;
+}
+
+.seats button {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-weight: 700;
+  font-size: 13px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.seats button.on {
+  background: var(--surface);
+  color: var(--pine);
+  box-shadow: 0 1px 2px rgba(28,25,23,0.08);
+}
+
+body[data-seat="edge"] .node-only,
+body[data-seat="edge"] .hub-only,
+body[data-seat="node"] .edge-only,
+body[data-seat="node"] .hub-only,
+body[data-seat="hub"] .edge-only,
+body[data-seat="hub"] .node-only { display: none; }
+
+.handoff {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.handoff.compact {
+  grid-template-columns: 1fr;
+  margin-top: 12px;
+}
+
+.handoff .idle {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 13px;
+  padding: 8px 0;
+}
+
+.handoff button.step,
+.handoff .step {
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 12px;
+  padding: 10px 12px;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  display: grid;
+  gap: 2px;
+}
+
+.handoff.compact .step {
+  cursor: default;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 6px 10px;
+}
+
+.handoff button.step:hover { border-color: #cfc6b8; }
+.handoff button.step.stop { border-color: var(--pine); box-shadow: inset 0 0 0 1px var(--pine); }
+.handoff button.step.unusual,
+.handoff button.step.escalate,
+.handoff button.step.alert,
+.handoff button.step.needed { background: #fff8f7; border-color: #f0c7c4; }
+.handoff button.step.usual,
+.handoff button.step.closed,
+.handoff button.step.log { background: #f3f8f5; }
+.handoff button.step.skipped,
+.handoff button.step.quiet { opacity: 0.72; }
+
+.handoff button.step b { font-size: 12px; }
+.handoff button.step span {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.handoff button.step em {
+  font-style: normal;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.pol-stat {
+  margin: 14px 0 0;
+  padding: 12px 14px;
+  background: #f3f8f5;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.review {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 14px;
+}
+
+@media (max-width: 860px) {
+  .handoff { grid-template-columns: 1fr 1fr; }
+  .seats { order: 3; width: 100%; justify-content: stretch; }
+  .seats button { flex: 1; }
+  .top { flex-wrap: wrap; }
+}
+
 .wrap {
   width: min(1120px, calc(100% - 40px));
   margin: 28px auto 64px;

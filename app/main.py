@@ -36,6 +36,10 @@ class SettingsUpdate(BaseModel):
     model: str = Field(min_length=1, max_length=500)
 
 
+class EventReview(BaseModel):
+    action: str = Field(min_length=1, max_length=20)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     log.info("Starting TundraNVR")
@@ -61,21 +65,21 @@ def health() -> dict:
 
 
 @app.get("/api/frame.jpg")
-def latest_frame() -> Response:
-    jpeg = pipeline.latest_jpeg()
+def latest_frame(seat: str = "node") -> Response:
+    jpeg = pipeline.latest_jpeg(seat)
     if not jpeg:
         raise HTTPException(status_code=503, detail="no frame yet")
     return Response(content=jpeg, media_type="image/jpeg")
 
 
 @app.get("/api/stream.mjpg")
-async def mjpeg_stream() -> StreamingResponse:
+async def mjpeg_stream(seat: str = "node") -> StreamingResponse:
     boundary = b"frame"
     interval = 1.0 / max(cfg.pipeline.live_fps, 1.0)
 
     async def generate():
         while True:
-            jpeg = pipeline.latest_jpeg()
+            jpeg = pipeline.latest_jpeg(seat)
             if jpeg:
                 yield (
                     b"--" + boundary + b"\r\n"
@@ -104,6 +108,20 @@ def list_events(limit: int = 50, alerts: bool = False) -> JSONResponse:
 @app.get("/api/events/{event_id}")
 def get_event(event_id: int) -> JSONResponse:
     row = pipeline.store.get(event_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="event not found")
+    return JSONResponse(_event_json(row))
+
+
+@app.post("/api/events/{event_id}/review")
+def review_event(event_id: int, body: EventReview) -> JSONResponse:
+    action = (body.action or "").strip().lower()
+    if action not in {"confirm", "dismiss"}:
+        raise HTTPException(status_code=400, detail="action must be confirm or dismiss")
+    try:
+        row = pipeline.review_event(event_id, action)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not row:
         raise HTTPException(status_code=404, detail="event not found")
     return JSONResponse(_event_json(row))
@@ -161,6 +179,11 @@ def _event_json(row: dict) -> dict:
         "summary": row.get("summary") or "",
         "anomaly": bool(row.get("anomaly")),
         "anomaly_reason": row.get("anomaly_reason") or "",
+        "source": row.get("source") or "",
+        "pol_score": row.get("pol_score"),
+        "stopped_at": row.get("stopped_at") or "",
+        "handoff": row.get("handoff") or {},
+        "operator_status": row.get("operator_status") or "",
     }
 
 

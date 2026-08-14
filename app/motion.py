@@ -17,12 +17,13 @@ class MotionDetector:
     def reset(self) -> None:
         self._prev = None
 
-    def measure(self, frame: np.ndarray) -> tuple[bool, int]:
+    def measure(self, frame: np.ndarray) -> tuple[bool, int, np.ndarray]:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         gray = cv2.GaussianBlur(gray, (self.blur_ksize, self.blur_ksize), 0)
+        empty = np.zeros((8, 8), dtype=np.float32)
         if self._prev is None:
             self._prev = gray
-            return False, 0
+            return False, 0, empty
 
         delta = cv2.absdiff(self._prev, gray)
         self._prev = gray
@@ -30,4 +31,5 @@ class MotionDetector:
         thresh = cv2.dilate(thresh, None, iterations=2)
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         area = int(sum(cv2.contourArea(contour) for contour in contours))
-        return area >= self.min_area, area
+        grid = cv2.resize(thresh, (8, 8), interpolation=cv2.INTER_AREA).astype(np.float32) / 255.0
+        return area >= self.min_area, area, grid

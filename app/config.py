@@ -229,6 +229,10 @@ class AppConfig:
         return self.data_dir / "thumbs"
 
     @property
+    def pol_dir(self) -> Path:
+        return self.data_dir / "pol"
+
+    @property
     def db_path(self) -> Path:
         return self.data_dir / "events.db"
 
@@ -326,6 +330,7 @@ def load_config(path: Path | None = None) -> AppConfig:
     cfg.data_dir.mkdir(parents=True, exist_ok=True)
     cfg.clips_dir.mkdir(parents=True, exist_ok=True)
     cfg.thumbs_dir.mkdir(parents=True, exist_ok=True)
+    cfg.pol_dir.mkdir(parents=True, exist_ok=True)
     return cfg
 
 
@@ -412,14 +417,17 @@ def public_settings(cfg: AppConfig) -> dict[str, Any]:
             {
                 "name": "Drone finder",
                 "status": "always on",
+                "seat": "node",
                 "blurb": (
                     "Always on next to the detector. Stock YOLO has no drone class; "
-                    "this extra model looks for quadcopters and winged UAVs."
+                    "this extra model looks for quadcopters and winged UAVs. "
+                    "A drone prior can skip a quiet Edge and still reach Node."
                 ),
             },
             {
                 "name": "Scene notes",
                 "status": vision_provider,
+                "seat": "hub",
                 "blurb": vision_blurb,
             },
         ],
@@ -427,4 +435,24 @@ def public_settings(cfg: AppConfig) -> dict[str, Any]:
             "expected_classes": cfg.monitoring.expected_classes,
             "alert_classes": cfg.monitoring.alert_classes,
         },
+        "escalation": [
+            {
+                "id": "edge",
+                "name": "Raspberry",
+                "question": "Anomaly or not?",
+                "blurb": "Motion plus this camera’s Pattern of Life. Usual frames stay on the Pi.",
+            },
+            {
+                "id": "node",
+                "name": "Node",
+                "question": "What is it?",
+                "blurb": "Names people and things on Edge trips. Drones skip a quiet Edge.",
+            },
+            {
+                "id": "hub",
+                "name": "Hub",
+                "question": "What is it doing?",
+                "blurb": "Captions activity only when Node cannot close the packet.",
+            },
+        ],
     }

@@ -1,6 +1,6 @@
 # TundraNVR
 
-Local building CCTV monitor: **fixed camera or video file → motion filter → object detection (people/vehicles + drones) → log what happened → save clips → web UI**.
+Local building CCTV monitor: **fixed camera or video file → Edge (Pattern of Life) → Node (what is it) → Hub (what is it doing) → operator**. One process, one GUI; the Monitor page swaps seats so you can see how the ladder feeds forward.
 
 One camera or one sample clip is enough. Samples are **static** security-camera views (entrance, corridor, lobby, parking), not handheld or moving shots.
 
@@ -11,12 +11,13 @@ One camera or one sample clip is enough. Samples are **static** security-camera 
 | Language | Python 3.12 |
 | API / UI | FastAPI + static HTML |
 | Ingest | OpenCV `VideoCapture` |
-| Motion | OpenCV frame differencing |
+| Motion | OpenCV frame differencing + occupancy grid |
 | Detection | Ultralytics YOLO nano on CPU, plus a UAV/drone model |
-| Scene notes | Ollama, OpenAI vision, or YOLO fallback |
-| Alerts | Rule-based anomaly flags (drone, aircraft, unattended bag, unexpected class) |
-| Storage | SQLite + filesystem clips/thumbs |
-| Live view | MJPEG / JPEG over HTTP |
+| Pattern of Life | Per-camera visual baseline and usual-motion grid (Edge) |
+| Scene notes | Ollama, OpenAI vision, or YOLO fallback — Hub only |
+| Alerts | Edge unusualness, class priors (drone/aircraft), unattended bag; operator confirm/dismiss |
+| Storage | SQLite + filesystem clips/thumbs + per-camera PoL JSON |
+| Live view | MJPEG / JPEG over HTTP (`?seat=edge|node|hub`)
 | Config | `config.yaml` |
 
 ## Setup
@@ -50,14 +51,15 @@ Default source is `data/samples/entrance.mp4` (CAVIAR building door). The live p
 python -m app.main
 ```
 
-Then open http://127.0.0.1:8000 — Monitor — and http://127.0.0.1:8000/events for Activity. Detector choices are explained on the Monitor page.
+Then open http://127.0.0.1:8000 — Monitor — and http://127.0.0.1:8000/events for Activity. On Monitor, switch **Raspberry / Node / Hub** to sit at each stage of the same pipeline.
 
 | Route | Role |
 | --- | --- |
-| `GET /health` | ingest status, last detections, last scene note, anomaly flag, version |
-| `GET /api/frame.jpg` | latest JPEG (with overlay) |
-| `GET /api/stream.mjpg` | live MJPEG |
-| `GET /api/events` | recent events JSON (`?alerts=true` for flagged only) |
+| `GET /health` | ingest status, last detections, handoff strip, PoL state, version |
+| `GET /api/frame.jpg?seat=edge\|node\|hub` | latest JPEG for that seat |
+| `GET /api/stream.mjpg?seat=edge\|node\|hub` | live MJPEG for that seat |
+| `GET /api/events` | recent events JSON (`?alerts=true` for operator-paged only) |
+| `POST /api/events/{id}/review` | `{ "action": "confirm" \| "dismiss" }` — dismiss trains PoL |
 | `GET /api/settings` | current video source and YOLO model |
 | `PUT /api/settings` | set source/model, persist, restart pipeline |
 | `GET /media/...` | thumbs and clips |
@@ -84,9 +86,22 @@ See [`config.yaml`](config.yaml). The live page **Apply** button writes `data/se
 - `vision.ollama_url` / `vision.ollama_model` — local vision model (default `moondream` at `http://127.0.0.1:11434`)
 - `vision.openai_model` — used when `OPENAI_API_KEY` is set (default `gpt-4o-mini`)
 
+## Escalation (proof of concept)
+
+The live page is one GUI with three seats on the same process:
+
+1. **Raspberry (Edge)** — motion + Pattern of Life. Usual frames would not leave the Pi. Overlay is an occupancy grid, not class names.
+2. **Node** — names objects on Edge trips (or on a policy skip: drone, aircraft, unattended bag). Detector cards live here.
+3. **Hub** — captions *what it is doing* only when Node cannot close the packet.
+4. **Operator** — Activity: confirm (real incident) or dismiss (fold into this camera’s baseline).
+
+A compact handoff strip shows the climb. Click a stage to jump to that seat.
+
+Each camera source has its own profile under `data/pol/`. The first ~80 detect ticks are **learning** (Edge is jumpy and uploads). After that, doorway traffic that matches the grid is kept locally. Dismissed events update that profile; confirmed ones do not.
+
 ## Scene log and alerts
 
-After an event is saved, a short caption is written to the event’s `summary` and shown on `/events`. The live page also shows the latest `last_scene` line from `/health`.
+After a Hub escalation, a short caption is written to the event’s `summary` and shown on `/events`. Node-closed packets get a short “named and closed” note without calling a VLM.
 
 With `vision.provider: auto` the app tries, in order:
 
@@ -94,13 +109,13 @@ With `vision.provider: auto` the app tries, in order:
 2. OpenAI if `OPENAI_API_KEY` is in the environment
 3. A YOLO-based sentence from the detected classes (always available)
 
-Alerts are a first-cut rule check, not a trained anomaly model:
+Class priors still force a climb even if Edge looks usual:
 
-- `drone` or `airplane` → always an alert
+- `drone` or `airplane` → Node + Hub + operator
 - bag class with no person → unattended bag
 - any other class not in `monitoring.expected_classes` → unexpected
 
-A learned “this is not how this camera usually looks” model is the next step; the `anomaly` / `anomaly_reason` fields on each event are the place that will plug in.
+Pattern of Life is the main gate, not a pile of geometry rules.
 
 ## Public webcams
 
@@ -110,7 +125,7 @@ Do not point the source at random unsecured IP cameras. Stick to feeds the opera
 
 ## Pipeline
 
-Motion without a matching class does **not** create events. A matching detection writes an event, a JPEG thumb, a short MP4 clip (H.264 via ffmpeg when available), a scene note, and an optional anomaly flag. If the stream drops, ingest reopens the capture after a short backoff. JPEG still URLs are re-fetched on an interval instead of treated as end-of-file.
+Motion without a matching class does **not** create events. Edge-usual frames with no policy skip do not create events either (they would stay on the Pi). A Node-received packet writes an event, a JPEG thumb, a short MP4 clip (H.264 via ffmpeg when available), a scene note if Hub ran, and an optional operator flag. If the stream drops, ingest reopens the capture after a short backoff. JPEG still URLs are re-fetched on an interval instead of treated as end-of-file.
 
 Entrance/corridor/lobby clips are from the EC CAVIAR project (IST 2001 37540).
 

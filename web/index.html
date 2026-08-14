@@ -6,12 +6,17 @@
   <title>Tundra — Monitor</title>
   <link rel="stylesheet" href="/app.css" />
 </head>
-<body>
+<body data-seat="edge">
   <header class="top">
     <div class="brand">
       <strong>Tundra</strong>
       <span class="tag">Building camera</span>
       <span id="version"></span>
+    </div>
+    <div class="seats" id="seats" role="tablist" aria-label="Pipeline seat">
+      <button type="button" data-seat="edge" class="on">Raspberry</button>
+      <button type="button" data-seat="node">Node</button>
+      <button type="button" data-seat="hub">Hub</button>
     </div>
     <nav>
       <a class="active" href="/">Monitor</a>
@@ -19,19 +24,22 @@
     </nav>
   </header>
   <main class="wrap">
+    <ol class="handoff" id="handoff" aria-label="Escalation"></ol>
+
     <section class="stage">
-      <img id="stream" alt="Live camera" src="/api/stream.mjpg" />
+      <img id="stream" alt="Live camera" src="/api/stream.mjpg?seat=edge" />
       <div class="hud">
         <span class="pill wait" id="status"><span class="dot">●</span> Connecting</span>
         <span class="pill" id="cameraName">Camera</span>
+        <span class="pill" id="seatPill">Raspberry</span>
         <span class="pill alert" id="alertPill" hidden></span>
       </div>
     </section>
 
     <section class="scene-card" id="sceneCard">
-      <p class="kicker">What’s in view</p>
+      <p class="kicker" id="sceneKicker">Anomaly or not?</p>
       <h2 id="scene">Waiting for the camera…</h2>
-      <p class="lede" id="sceneSub">Motion with a known object becomes a log line.</p>
+      <p class="lede" id="sceneSub">This seat is the Pi: usual frames never leave.</p>
       <div class="objects" id="objects"></div>
     </section>
 
@@ -39,7 +47,7 @@
       <div class="panel">
         <p class="kicker">Camera</p>
         <h2>Where to look</h2>
-        <p class="lede">Static building views. Click one to switch — the live picture pauses while it restarts.</p>
+        <p class="lede">Static building views. Click one to switch — the live picture pauses while it restarts. Pattern of Life is remembered per camera.</p>
         <div class="chips" id="sourceChips" style="margin-top:14px"></div>
         <details class="advanced">
           <summary>File, URL, or other cameras</summary>
@@ -55,12 +63,26 @@
         <div class="msg" id="settingsMsg"></div>
       </div>
 
-      <div class="panel">
+      <div class="panel edge-only" id="edgePanel">
+        <p class="kicker">Edge</p>
+        <h2>Pattern of Life</h2>
+        <p class="lede">This camera learns where motion usually is. During learning, Edge is jumpy and uploads. Once confident, usual doorway traffic stays on the Raspberry.</p>
+        <p class="pol-stat" id="polStat">Learning…</p>
+      </div>
+
+      <div class="panel node-only" id="nodePanel">
         <p class="kicker">How it sees</p>
         <h2>Detector</h2>
-        <p class="lede">This model names people and things. Bigger is slower and usually catches more. Drones are a separate always-on model.</p>
+        <p class="lede">This model names people and things on packets Edge would upload. Bigger is slower and usually catches more. Drones are a separate always-on prior.</p>
         <div class="cards" id="modelCards" style="margin-top:14px"></div>
-        <div class="extras" id="stack"></div>
+        <div class="extras" id="nodeStack"></div>
+      </div>
+
+      <div class="panel hub-only" id="hubPanel">
+        <p class="kicker">Hub</p>
+        <h2>What it is doing</h2>
+        <p class="lede">A caption runs only when Node cannot close the packet — a drone prior, an unattended bag, or a scene that still looks unlike this camera.</p>
+        <div class="extras" id="hubStack"></div>
       </div>
     </section>
   </main>
@@ -72,10 +94,11 @@
     const applySource = document.getElementById("applySource");
     const settingsMsg = document.getElementById("settingsMsg");
     const modelCards = document.getElementById("modelCards");
-    const stackEl = document.getElementById("stack");
     let currentSource = "";
     let currentModel = "yolov8n.pt";
     let samples = [];
+    let seat = "edge";
+    const seatNames = { edge: "Raspberry", node: "Node", hub: "Hub" };
 
     function setMsg(text, kind) {
       settingsMsg.textContent = text;
@@ -107,6 +130,44 @@
       document.getElementById("cameraName").textContent = friendlyCamera(currentSource);
     }
 
+    function setSeat(next) {
+      if (next === "operator") {
+        window.location.href = "/events";
+        return;
+      }
+      if (next === "raspberry") next = "edge";
+      if (!["edge", "node", "hub"].includes(next)) return;
+      seat = next;
+      document.body.dataset.seat = seat;
+      document.getElementById("seats").querySelectorAll("button").forEach((btn) => {
+        btn.classList.toggle("on", btn.getAttribute("data-seat") === seat);
+      });
+      document.getElementById("seatPill").textContent = seatNames[seat];
+      document.getElementById("stream").src = "/api/stream.mjpg?seat=" + seat + "&t=" + Date.now();
+      refreshHealth();
+    }
+
+    function renderHandoff(handoff) {
+      const el = document.getElementById("handoff");
+      const steps = (handoff && handoff.steps) || [];
+      if (!steps.length) {
+        el.innerHTML = `<li class="idle">Waiting for a tick… Raspberry → Node → Hub → Operator</li>`;
+        return;
+      }
+      el.innerHTML = steps.map((s) => {
+        const stop = s.stage === (handoff.stopped_at || "");
+        const cls = ["step", s.decision, stop ? "stop" : ""].join(" ").trim();
+        return `<li><button type="button" class="${cls}" data-stage="${s.stage}">
+          <b>${s.label}</b>
+          <span>${s.decision}</span>
+          <em>${s.detail || ""}</em>
+        </button></li>`;
+      }).join("");
+      el.querySelectorAll("button").forEach((btn) => {
+        btn.addEventListener("click", () => setSeat(btn.getAttribute("data-stage")));
+      });
+    }
+
     async function applySettings(source, model, note) {
       applySource.disabled = true;
       setMsg(note || "Switching camera… live view pauses for a moment.");
@@ -121,9 +182,9 @@
         currentSource = data.source || source;
         currentModel = data.model || model;
         sourceInput.value = currentSource;
-        document.getElementById("stream").src = "/api/stream.mjpg?" + Date.now();
+        document.getElementById("stream").src = "/api/stream.mjpg?seat=" + seat + "&t=" + Date.now();
         markSelected();
-        setMsg("Updated.", "ok");
+        setMsg("Updated. This camera has its own Pattern of Life profile.", "ok");
         refreshHealth();
       } catch (err) {
         setMsg(err.message || "could not apply settings", "err");
@@ -147,28 +208,77 @@
         document.getElementById("cameraName").textContent = friendlyCamera(currentSource || data.source);
         const scene = document.getElementById("scene");
         const sub = document.getElementById("sceneSub");
+        const kicker = document.getElementById("sceneKicker");
         const card = document.getElementById("sceneCard");
         const alertPill = document.getElementById("alertPill");
-        const dets = data.last_detections || [];
-        const liveAlert = data.last_anomaly && dets.some((d) => d.cls === "drone" || d.cls === "airplane")
-          ? data.last_anomaly
-          : "";
-        if (liveAlert) {
-          card.classList.add("alert");
-          scene.textContent = data.last_scene || liveAlert;
-          sub.textContent = liveAlert;
-          alertPill.hidden = false;
-          alertPill.textContent = liveAlert;
-        } else {
-          card.classList.remove("alert");
-          scene.textContent = data.last_scene || (data.last_motion ? "Motion, nothing named yet." : "Quiet.");
-          sub.textContent = data.last_motion ? "Something moved in the frame." : "No motion right now.";
-          alertPill.hidden = true;
-        }
         const objs = document.getElementById("objects");
-        objs.innerHTML = dets.length
-          ? dets.map((d) => `<span>${d.cls}</span>`).join("")
-          : "";
+        const handoff = data.handoff || {};
+        const edge = handoff.edge || {};
+        const node = handoff.node || {};
+        const hub = handoff.hub || {};
+        const pol = data.pol || {};
+        renderHandoff(handoff);
+
+        const polEl = document.getElementById("polStat");
+        if (polEl) {
+          const n = pol.samples || 0;
+          polEl.textContent = pol.confident
+            ? `Confident after ${n} ticks. Unusual score ${edge.score ?? "—"} · ${edge.reason || "looks like this camera"}`
+            : `Learning (${n}/80 ticks). Edge uploads while it learns this view.`;
+        }
+
+        card.classList.remove("alert");
+        alertPill.hidden = true;
+        if (seat === "edge") {
+          kicker.textContent = "Anomaly or not?";
+          if (!data.last_motion) {
+            scene.textContent = "Quiet — would not leave the Pi.";
+            sub.textContent = "No motion. Raspberry keeps the frame locally.";
+          } else if (edge.upload) {
+            scene.textContent = "Unusual — would upload to Node.";
+            sub.textContent = edge.reason || "This does not match the camera’s usual pattern.";
+          } else if (edge.prior_skip) {
+            scene.textContent = "Usual scene, but a policy skip sent this to Node.";
+            sub.textContent = "Edge would have kept this; Node still received it because of a hard prior (drone, aircraft, unattended bag).";
+          } else {
+            scene.textContent = "Usual — would not leave the Pi.";
+            sub.textContent = edge.reason || "Motion is where this camera expects it.";
+          }
+          objs.innerHTML = "";
+        } else if (seat === "node") {
+          kicker.textContent = "What is it?";
+          const dets = node.received ? (node.classes || data.last_detections || []) : [];
+          if (!node.received) {
+            scene.textContent = "Inbox empty.";
+            sub.textContent = "Edge kept this locally. Node only sees trips.";
+          } else if (node.closed) {
+            scene.textContent = (dets.map((d) => d.cls).join(", ") || "Named") + " — closed.";
+            sub.textContent = "Expected class in an expected place. Hub is not asked.";
+          } else {
+            scene.textContent = (dets.map((d) => d.cls).join(", ") || "Unsure") + " — send to Hub.";
+            sub.textContent = hub.detail || data.last_scene || "Node could not close this packet.";
+          }
+          objs.innerHTML = dets.length ? dets.map((d) => `<span>${d.cls}</span>`).join("") : "";
+        } else {
+          kicker.textContent = "What is it doing?";
+          if (!hub.ran) {
+            scene.textContent = "Idle.";
+            sub.textContent = "Node did not escalate. Hub never sees usual video.";
+            objs.innerHTML = "";
+          } else {
+            scene.textContent = data.last_scene || hub.detail || "Describing activity…";
+            sub.textContent = hub.page_operator
+              ? "Paging the operator — confirm or dismiss on Activity."
+              : "Logged without paging. Operator can still review on Activity.";
+            if (hub.page_operator) {
+              card.classList.add("alert");
+              alertPill.hidden = false;
+              alertPill.textContent = data.last_anomaly || "operator";
+            }
+            const dets = node.classes || data.last_detections || [];
+            objs.innerHTML = dets.length ? dets.map((d) => `<span>${d.cls}</span>`).join("") : "";
+          }
+        }
         if (data.display) document.getElementById("version").textContent = data.display;
       } catch (err) {
         document.getElementById("status").textContent = "Health error";
@@ -221,12 +331,19 @@
         });
       });
       renderModels(data.detectors || []);
-      stackEl.innerHTML = (data.stack || []).map((s) =>
+      const extras = data.stack || [];
+      document.getElementById("nodeStack").innerHTML = extras.filter((s) => s.seat !== "hub").map((s) =>
+        `<div class="extra"><b>${s.name} · ${s.status}</b><p>${s.blurb}</p></div>`
+      ).join("");
+      document.getElementById("hubStack").innerHTML = extras.filter((s) => s.seat === "hub").map((s) =>
         `<div class="extra"><b>${s.name} · ${s.status}</b><p>${s.blurb}</p></div>`
       ).join("");
       markSelected();
     }
 
+    document.getElementById("seats").querySelectorAll("button").forEach((btn) => {
+      btn.addEventListener("click", () => setSeat(btn.getAttribute("data-seat")));
+    });
     document.getElementById("sourceForm").addEventListener("submit", (ev) => {
       ev.preventDefault();
       applySettings(sourceInput.value, currentModel);
