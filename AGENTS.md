@@ -1,6 +1,6 @@
 # TundraNVR
 
-Local camera-detection MVP: camera → Edge (OpenCV motion + Pattern of Life) → Node (YOLO on trips + ByteTrack) → Hub (VLM verifier JSON, fail-open) → operator. See [`README.md`](README.md) and [`LICENSING.md`](LICENSING.md).
+Local camera-detection MVP: camera → Edge (OpenCV motion + Pattern of Life) → Node (YOLO on trips + ByteTrack) → Hub (VLM verifier JSON, fail-open) → operator. See [`README.md`](README.md), [`LICENSING.md`](LICENSING.md), and [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md).
 
 ## Cursor Cloud specific instructions
 
@@ -25,5 +25,6 @@ Single Python service. There are no tests or linters configured in this repo bes
 ### Testing / behavior notes
 - Motion is OpenCV frame difference. YOLO only on Edge trips. Tracks: one track ≤ one event. Dwell is on `/api/events` (`dwell_s`, `track_id`).
 - Hub verifier is local-only unless `vision.allow_cloud: true`. Fail-open: `verifier_status=unavailable` keeps the rule alert.
-- `python scripts/eval.py --smoke` writes a fixture ablation table; never treat it as site headline numbers.
-- Do not add audio.
+- Escalation default is `recall` (any plausible Node trip → Hub). Do not gate on YOLO/VLM confidence. `/health` → `escalation`.
+- `python scripts/eval.py --smoke` writes a fixture ablation table (NAR/Pd/FAR language); never treat it as site headline numbers.
+- Do not add audio, face recognition, LPR, or emotion recognition.

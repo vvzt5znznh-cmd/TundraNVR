@@ -1,5 +1,5 @@
 {
-  "note": "Development fixture only. Never report headline PoC numbers from this file.",
+  "note": "Development fixture only. Never report headline PoC NAR/Pd/FAR from this file or from synthetic --smoke frames.",
   "source": "synthetic",
   "events": [
     {"t_start": 0.4, "t_end": 1.6, "label": "motion", "alert": false}

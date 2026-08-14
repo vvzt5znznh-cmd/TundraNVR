@@ -121,7 +121,8 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 401) { reviewMsg.textContent = "API token required to review."; return; }
       if (!res.ok) { reviewMsg.textContent = data.detail || "Failed."; return; }
       events = events.map((e) => (e.id === data.id ? data : e));
       render();

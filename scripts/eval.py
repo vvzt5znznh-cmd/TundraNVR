@@ -2,7 +2,9 @@
 """Replay labelled footage through the pipeline and emit an ablation table.
 
 Headline PoC numbers must come from a labelled hold-out of *our* building camera.
-Sample clips and this --smoke path are fixtures only.
+Sample clips, CAVIAR, and this --smoke path are fixtures only — never headline.
+IEC 62676-4 mapping: NAR ≈ operator alerts per camera-day; Pd ≈ event-level
+recall; FAR proxy ≈ 1 − precision. Confidence Level is not estimated here.
 """
 
 from __future__ import annotations
@@ -27,6 +29,10 @@ from app.pipeline import Pipeline
 
 
 STAGES = ("motion", "detect", "track", "verifier", "fusion", "novelty")
+FIXTURE_BANNER = (
+    "eval fixture — not headline numbers. Do not report NAR/Pd/FAR from "
+    "synthetic frames, CAVIAR, or bundled sample clips."
+)
 
 
 class FakeDetector:
@@ -60,6 +66,13 @@ def synthetic_frames(n: int = 24, w: int = 320, h: int = 180) -> list[np.ndarray
     return frames
 
 
+def _p95(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    return ordered[int(0.95 * (len(ordered) - 1))]
+
+
 def run_stage(stage: str, frames: list[np.ndarray], labels: dict) -> dict:
     import tempfile
 
@@ -72,6 +85,7 @@ def run_stage(stage: str, frames: list[np.ndarray], labels: dict) -> dict:
     cfg.camera.width = frames[0].shape[1]
     cfg.camera.height = frames[0].shape[0]
     cfg.events.write_media = False
+    cfg.escalation.mode = "recall"
     cfg.vision.enabled = stage in {"verifier", "fusion", "novelty"}
     cfg.fusion.enabled = stage in {"fusion", "novelty"}
     cfg.embed.enabled = stage == "novelty"
@@ -82,12 +96,12 @@ def run_stage(stage: str, frames: list[np.ndarray], labels: dict) -> dict:
     else:
         pipe.detector = FakeDetector()  # type: ignore[assignment]
     t0 = time.perf_counter()
-    latencies = []
+    ingest_ms = []
     now = 0.0
     for frame in frames:
         s = time.perf_counter()
         pipe.ingest_frame(frame, now)
-        latencies.append((time.perf_counter() - s) * 1000.0)
+        ingest_ms.append((time.perf_counter() - s) * 1000.0)
         now += 0.2
     pipe.flush()
     elapsed = time.perf_counter() - t0
@@ -95,28 +109,47 @@ def run_stage(stage: str, frames: list[np.ndarray], labels: dict) -> dict:
     alerts = [e for e in events if e.get("anomaly")]
     labelled = labels.get("events") or []
     true_alerts = [x for x in labelled if x.get("alert")]
+    # Event-level, not frame-level. Count match only — no IoU on this fixture.
     tp = min(len(alerts), len(true_alerts)) if true_alerts else 0
     recall = (tp / len(true_alerts)) if true_alerts else (1.0 if not alerts else 1.0)
     precision = (tp / len(alerts)) if alerts else (1.0 if not true_alerts else 0.0)
-    latencies.sort()
-    p95 = latencies[int(0.95 * (len(latencies) - 1))] if latencies else 0.0
+    far_proxy = round(1.0 - precision, 3)
+    verdict_ms = list(pipe.verdict_latencies_ms) or ingest_ms
+    p95 = _p95(verdict_ms)
     duration_s = max(0.2 * len(frames), 1e-6)
     cam_days = duration_s / 86400.0
-    alerts_per_day = len(alerts) / cam_days if cam_days else 0.0
+    nar = len(alerts) / cam_days if cam_days else 0.0
     tracks = {e.get("track_id") for e in events if e.get("track_id") is not None}
     drone_events = [e for e in events if "drone" in (e.get("classes") or [])]
+    esc = pipe.escalation_counts
+    rasp = esc["raspberry_trips"]
+    node = esc["node_proposals"]
+    hub_h = esc["hub_handoffs"]
+    hub_a = esc["hub_alerts"]
+    confirms = sum(1 for e in events if (e.get("operator_status") or "") == "confirmed")
     pipe.store.close()
     return {
         "stage": stage,
         "alerts": len(alerts),
         "events": len(events),
         "tracks": len(tracks),
-        "alerts_per_cam_day": round(alerts_per_day, 1),
+        "nar_per_cam_day": round(nar, 1),
+        "alerts_per_cam_day": round(nar, 1),
+        "pd_recall": round(recall, 3),
         "precision": round(precision, 3),
         "recall": round(recall, 3),
+        "far_proxy": far_proxy,
         "p95_ms": round(p95, 1),
         "elapsed_s": round(elapsed, 3),
         "drone_events": len(drone_events),
+        "raspberry_trips": rasp,
+        "node_proposals": node,
+        "hub_handoffs": hub_h,
+        "hub_alerts": hub_a,
+        "operator_confirms": confirms,
+        "node_per_raspberry": round(node / rasp, 3) if rasp else 0.0,
+        "hub_per_node": round(hub_h / node, 3) if node else 0.0,
+        "alerts_per_hub": round(hub_a / hub_h, 3) if hub_h else 0.0,
         "verifier_unavailable": sum(
             1 for e in events if (e.get("verifier_status") or "") == "unavailable"
         ),
@@ -127,12 +160,22 @@ def write_table(rows: list[dict], dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     fields = [
         "stage",
-        "alerts_per_cam_day",
+        "nar_per_cam_day",
+        "pd_recall",
+        "far_proxy",
         "precision",
         "recall",
         "p95_ms",
         "events",
         "tracks",
+        "raspberry_trips",
+        "node_proposals",
+        "hub_handoffs",
+        "hub_alerts",
+        "operator_confirms",
+        "node_per_raspberry",
+        "hub_per_node",
+        "alerts_per_hub",
         "drone_events",
     ]
     with dest.with_suffix(".csv").open("w", encoding="utf-8", newline="") as handle:
@@ -142,16 +185,26 @@ def write_table(rows: list[dict], dest: Path) -> None:
     lines = [
         "# Ablation (fixture — not headline numbers)",
         "",
-        "| Stage | Alerts/cam-day | Precision | Recall | P95 ms | Events | Tracks |",
-        "|---|---:|---:|---:|---:|---:|---:|",
+        FIXTURE_BANNER,
+        "",
+        "IEC 62676-4 mapping: **NAR** ≈ operator alerts/camera-day; **Pd** ≈ event-level recall; "
+        "**FAR proxy** ≈ 1 − precision. Confidence Level is not estimated on this fixture.",
+        "",
+        "| Stage | NAR/cam-day | Pd (recall) | FAR proxy | Precision | P95 ms | Raspberry | Node | Hub handoffs | Hub alerts | Confirms | Node/Rasp | Hub/Node |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for row in rows:
         lines.append(
-            f"| {row['stage']} | {row['alerts_per_cam_day']} | {row['precision']} | "
-            f"{row['recall']} | {row['p95_ms']} | {row['events']} | {row['tracks']} |"
+            f"| {row['stage']} | {row['nar_per_cam_day']} | {row['pd_recall']} | "
+            f"{row['far_proxy']} | {row['precision']} | {row['p95_ms']} | "
+            f"{row['raspberry_trips']} | {row['node_proposals']} | {row['hub_handoffs']} | "
+            f"{row['hub_alerts']} | {row['operator_confirms']} | "
+            f"{row['node_per_raspberry']} | {row['hub_per_node']} |"
         )
     lines.append("")
-    lines.append("Drone metrics are a separate row (`drone_events`) and must not be folded into the headline sentence.")
+    lines.append(
+        "Drone metrics are a separate column (`drone_events`) and must not be folded into the headline sentence."
+    )
     dest.with_suffix(".md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -167,7 +220,7 @@ def main() -> int:
         labels = json.loads(args.labels.read_text(encoding="utf-8"))
     if args.smoke or not args.video:
         frames = synthetic_frames()
-        print("eval fixture: synthetic frames (not a site hold-out)", file=sys.stderr)
+        print(FIXTURE_BANNER, file=sys.stderr)
     else:
         cap = cv2.VideoCapture(str(args.video))
         frames = []
@@ -182,6 +235,10 @@ def main() -> int:
         if not frames:
             print("no frames", file=sys.stderr)
             return 1
+        print(
+            "eval on provided video — still not a site hold-out unless labels are from that camera",
+            file=sys.stderr,
+        )
     rows = [run_stage(stage, frames, labels) for stage in STAGES]
     write_table(rows, args.out)
     print(args.out.with_suffix(".md").read_text(encoding="utf-8"))

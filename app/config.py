@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+import os
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+from app.security import ALLOWED_SOURCE_SCHEMES, redact_source, source_scheme
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = ROOT / "config.yaml"
@@ -126,6 +129,7 @@ class EventsConfig:
 class ServerConfig:
     host: str = "0.0.0.0"
     port: int = 8000
+    api_token: str = ""
 
 
 @dataclass
@@ -166,6 +170,14 @@ class EmbedConfig:
 
 
 @dataclass
+class EscalationConfig:
+    """recall = any plausible Node trip goes to Hub; pol_score = legacy PoL gate."""
+
+    mode: str = "recall"
+    pol_score_min: float = 0.7
+
+
+@dataclass
 class ZoneConfig:
     name: str
     polygon: list[list[float]]
@@ -185,6 +197,7 @@ class AppConfig:
     fusion: FusionConfig
     mqtt: MqttSettings
     embed: EmbedConfig
+    escalation: EscalationConfig
     zones: list[ZoneConfig] = field(default_factory=list)
     root: Path = ROOT
 
@@ -224,6 +237,11 @@ class AppConfig:
         return str(self.root / path)
 
 
+def _escalation_mode(value: Any) -> str:
+    mode = str(value or "recall").strip().lower()
+    return mode if mode in {"recall", "pol_score"} else "recall"
+
+
 def _zones(raw: list) -> list[ZoneConfig]:
     out: list[ZoneConfig] = []
     for item in raw or []:
@@ -261,6 +279,7 @@ def load_config(path: Path | None = None) -> AppConfig:
     fusion_raw = raw.get("fusion") or {}
     mqtt_raw = raw.get("mqtt") or {}
     embed_raw = raw.get("embed") or {}
+    escalation_raw = raw.get("escalation") or {}
 
     provider = str(vision_raw.get("provider", "local")).strip().lower()
     if provider in {"auto", "none", "false"}:
@@ -303,6 +322,11 @@ def load_config(path: Path | None = None) -> AppConfig:
         server=ServerConfig(
             host=str(server_raw.get("host", "0.0.0.0")),
             port=int(server_raw.get("port", 8000)),
+            api_token=str(
+                os.environ.get("TUNDRANVR_API_TOKEN")
+                or server_raw.get("api_token")
+                or ""
+            ).strip(),
         ),
         vision=VisionConfig(
             enabled=bool(vision_raw.get("enabled", True)),
@@ -341,6 +365,10 @@ def load_config(path: Path | None = None) -> AppConfig:
             enabled=bool(embed_raw.get("enabled", True)),
             knn=int(embed_raw.get("knn", 5)),
             gate_alerts=bool(embed_raw.get("gate_alerts", False)),
+        ),
+        escalation=EscalationConfig(
+            mode=_escalation_mode(escalation_raw.get("mode")),
+            pol_score_min=float(escalation_raw.get("pol_score_min", 0.7)),
         ),
         zones=_zones(raw.get("zones") or []),
         root=ROOT,
@@ -384,7 +412,13 @@ def parse_settings_update(source: str) -> str | int:
     source_text = (source or "").strip()
     if not source_text:
         raise SettingsError("source is required")
+    if "***" in source_text:
+        raise SettingsError("redacted source is not usable; paste the full URL")
     parsed = _as_source(source_text)
+    if isinstance(parsed, str) and "://" in parsed:
+        scheme = source_scheme(parsed)
+        if scheme not in ALLOWED_SOURCE_SCHEMES:
+            raise SettingsError(f"unsupported source scheme: {scheme or 'empty'}")
     if isinstance(parsed, str) and "://" not in parsed:
         path = Path(parsed)
         resolved = path if path.is_absolute() else ROOT / path
@@ -397,8 +431,10 @@ def public_settings(cfg: AppConfig) -> dict[str, Any]:
     from app.vision import effective_provider
 
     return {
-        "source": str(cfg.camera.source),
+        "source": redact_source(cfg.camera.source),
         "model": cfg.detection.model,
         "vision": effective_provider(cfg.vision) if cfg.vision.enabled else "off",
         "allow_cloud": bool(cfg.vision.allow_cloud),
+        "auth_required": bool(cfg.server.api_token),
+        "escalation": cfg.escalation.mode,
     }

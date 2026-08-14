@@ -4,7 +4,11 @@ Camera → **Raspberry** (unusual?) → **Node** (detect + track) → **Hub** (V
 
 Motion is pixel change. Pattern of Life is a learned occupancy footprint. YOLO names Edge trips only. Node assigns stable track IDs (one track ≤ one event). Hub adjudicates with a Set-of-Mark prompt and structured JSON. Captions are a search byproduct, never the decision.
 
-Default vision is **local-only**. Cloud OpenAI requires `vision.allow_cloud: true`. See [`LICENSING.md`](LICENSING.md).
+**Escalation is recall-oriented** (`escalation.mode: recall`): Node hands Hub any plausible track. Do not gate on YOLO or VLM confidence. Hub suppresses. `pol_score` restores the old PoL ≥ 0.7 gate.
+
+Default vision is **local-only**. Cloud OpenAI requires `vision.allow_cloud: true`. See [`LICENSING.md`](LICENSING.md) and [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md).
+
+This PoC is **one building camera**. Critical-infrastructure buyers will still scrutinise it as Annex III-adjacent; that is documentation and later work, not this binary. Face recognition, LPR, emotion recognition, and audio are **out**.
 
 ```bash
 python3.12 -m venv .venv
@@ -16,10 +20,14 @@ python -m app.main
 
 Set `camera.source` to index `0` or an RTSP URL. Activity is confirm / dismiss — dismiss trains Pattern of Life.
 
-Offline ablation (fixtures only — not headline numbers):
+Optional mutating-API token: `server.api_token` or `TUNDRANVR_API_TOKEN` (Bearer or `X-API-Token`) on `PUT /api/settings` and event review. Live MJPEG stays open.
+
+Offline ablation (fixtures only — **not** headline NAR/Pd/FAR):
 
 ```bash
 python scripts/eval.py --smoke
 ```
 
-`torch` and `torchvision` must both be the CPU wheels from that index, or detection fails with `torchvision::nms does not exist`. YOLO fetches `yolov8n.pt` on the first Edge trip.
+`/health` reports `escalation` counts (Raspberry trips → Node proposals → Hub alerts → operator confirms).
+
+`torch` and `torchvision` must both be the CPU wheels from that index, or detection fails with `torchvision::nms does not exist`. YOLO fetches `yolov8n.pt` on the first Edge trip (AGPL — do not fine-tune until the detector licence is decided).

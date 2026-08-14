@@ -157,6 +157,7 @@ def verify_event(
         log.info("Verifier malformed JSON; fail-open rule_alert=%s", rule_alert)
         return verdict
     alert = bool(data.get("alert"))
+    # Do not threshold on VLM confidence — models are poorly calibrated.
     caption = str(data.get("caption") or data.get("reason") or "")
     marks = data.get("evidence_marks") or []
     if not isinstance(marks, list):

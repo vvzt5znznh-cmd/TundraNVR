@@ -52,6 +52,15 @@ events:
 server:
   host: 0.0.0.0
   port: 8000
+  # Optional. When set (or TUNDRANVR_API_TOKEN), PUT /api/settings and
+  # POST /api/events/{id}/review require Authorization: Bearer <token>.
+  api_token: ""
+
+escalation:
+  # recall: any plausible Node trip goes to Hub (default).
+  # pol_score: legacy gate on Pattern of Life score ≥ pol_score_min.
+  mode: recall
+  pol_score_min: 0.7
 
 vision:
   enabled: true

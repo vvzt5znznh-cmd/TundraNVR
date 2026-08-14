@@ -193,24 +193,47 @@ class EventStore:
         verifier_provider: str,
         verifier_status: str,
         novelty_score: float | None = None,
+        operator_status: str | None = None,
+        stopped_at: str | None = None,
     ) -> None:
         with self._lock:
-            self._conn.execute(
-                """
-                UPDATE events SET summary = ?, anomaly = ?, anomaly_reason = ?,
-                    verifier_provider = ?, verifier_status = ?, novelty_score = ?
-                WHERE id = ?
-                """,
-                (
-                    summary,
-                    1 if anomaly else 0,
-                    anomaly_reason,
-                    verifier_provider,
-                    verifier_status,
-                    novelty_score,
-                    event_id,
-                ),
-            )
+            if operator_status is None and stopped_at is None:
+                self._conn.execute(
+                    """
+                    UPDATE events SET summary = ?, anomaly = ?, anomaly_reason = ?,
+                        verifier_provider = ?, verifier_status = ?, novelty_score = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        summary,
+                        1 if anomaly else 0,
+                        anomaly_reason,
+                        verifier_provider,
+                        verifier_status,
+                        novelty_score,
+                        event_id,
+                    ),
+                )
+            else:
+                self._conn.execute(
+                    """
+                    UPDATE events SET summary = ?, anomaly = ?, anomaly_reason = ?,
+                        verifier_provider = ?, verifier_status = ?, novelty_score = ?,
+                        operator_status = ?, stopped_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        summary,
+                        1 if anomaly else 0,
+                        anomaly_reason,
+                        verifier_provider,
+                        verifier_status,
+                        novelty_score,
+                        operator_status or None,
+                        stopped_at,
+                        event_id,
+                    ),
+                )
             self._conn.commit()
 
     def event_for_track(self, track_id: int, source: str) -> dict[str, Any] | None:

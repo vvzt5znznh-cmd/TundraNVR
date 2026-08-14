@@ -5,7 +5,7 @@ import logging
 import threading
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -18,6 +18,7 @@ from app.config import (
     save_runtime_settings,
 )
 from app.pipeline import Pipeline
+from app.security import redact_source
 from app.version import VERSION, version_payload
 
 logging.basicConfig(
@@ -37,6 +38,22 @@ class SettingsUpdate(BaseModel):
 
 class EventReview(BaseModel):
     action: str = Field(min_length=1, max_length=20)
+
+
+def _require_mutating_auth(
+    authorization: str | None = Header(default=None),
+    x_api_token: str | None = Header(default=None, alias="X-API-Token"),
+) -> None:
+    token = (cfg.server.api_token or "").strip()
+    if not token:
+        return
+    presented = (x_api_token or "").strip()
+    if not presented and authorization:
+        scheme, _, rest = authorization.partition(" ")
+        if scheme.lower() == "bearer":
+            presented = rest.strip()
+    if presented != token:
+        raise HTTPException(status_code=401, detail="unauthorized")
 
 
 @asynccontextmanager
@@ -112,7 +129,11 @@ def get_event(event_id: int) -> JSONResponse:
 
 
 @app.post("/api/events/{event_id}/review")
-def review_event(event_id: int, body: EventReview) -> JSONResponse:
+def review_event(
+    event_id: int,
+    body: EventReview,
+    _: None = Depends(_require_mutating_auth),
+) -> JSONResponse:
     action = (body.action or "").strip().lower()
     if action not in {"confirm", "dismiss"}:
         raise HTTPException(status_code=400, detail="action must be confirm or dismiss")
@@ -131,7 +152,10 @@ def get_settings() -> dict:
 
 
 @app.put("/api/settings")
-def update_settings(body: SettingsUpdate) -> dict:
+def update_settings(
+    body: SettingsUpdate,
+    _: None = Depends(_require_mutating_auth),
+) -> dict:
     global cfg, pipeline
     try:
         source = parse_settings_update(body.source)
@@ -139,7 +163,7 @@ def update_settings(body: SettingsUpdate) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     with _settings_lock:
         save_runtime_settings(source=source, model=cfg.detection.model)
-        log.info("Applying source=%s", source)
+        log.info("Applying camera source %s", redact_source(source))
         old = pipeline
         old.stop()
         cfg = load_config()

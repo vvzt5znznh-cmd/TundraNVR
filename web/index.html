@@ -100,7 +100,8 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ source }),
         });
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
+        if (res.status === 401) throw new Error("API token required for camera changes");
         if (!res.ok) throw new Error(data.detail || "failed");
         currentSource = data.source || source;
         document.getElementById("sourceInput").value = currentSource;
@@ -150,6 +151,7 @@
         : "off";
       document.getElementById("visionPill").textContent = (data.vision || "local") + (data.allow_cloud ? "" : " · local");
       const tracks = (data.tracks || []).map((t) => "#" + t.id + " " + t.cls + " " + t.dwell_s + "s").join(", ") || "—";
+      const escalate = data.escalation || {};
       const rows = [
         ["Pattern of Life", (pol.confident ? "confident" : "learning") + " · " + n + " / " + need + " motion ticks"],
         ["Unusual score", (edge.score != null ? Number(edge.score).toFixed(2) : "—") + (edge.reason ? " · " + edge.reason : "")],
@@ -158,6 +160,7 @@
         ["Namer", namer],
         ["Tracks", tracks],
         ["Verifier", verifier],
+        ["Escalation", (escalate.mode || "recall") + " · R " + (escalate.raspberry_trips || 0) + " → N " + (escalate.node_proposals || 0) + " → Hub " + (escalate.hub_alerts || 0) + " alerts"],
         ["Camera", data.source || currentSource || "—"],
         ["Ingest", (data.fps || 0) + " fps · motion " + (data.motion_area || 0)],
       ];

@@ -15,11 +15,13 @@ from app.config import AppConfig
 from app.db import EventStore, utc_now
 from app.detect import Detection, ObjectDetector, draw_edge_overlay, draw_overlay
 from app.embed import EmbeddingIndex, thumb_hist
+from app.escalate import decide_hub
 from app.fusion import FusionBus, clock_context
 from app.motion import MotionDetector
 from app.mqtt_bus import MqttBus, MqttConfig
 from app.pol import PatternOfLife, absorb_into_file
 from app.record import ClipWriter, NullWriter, cleanup_old_events, save_thumb
+from app.security import redact_source
 from app.track import ByteTracker, Track, unattended_bags
 from app.verify import verify_event
 from app.vision import effective_provider, fallback_summary
@@ -76,6 +78,7 @@ class _ActiveEvent:
     last_frame: np.ndarray | None = None
     last_dets: list[Detection] = field(default_factory=list)
     fusion: dict = field(default_factory=dict)
+    t0_mono: float = 0.0
 
 
 class Pipeline:
@@ -154,6 +157,14 @@ class Pipeline:
         self._yolo_ran = False
         self._live_tracks: list[Track] = []
         self._seen_track_ids: set[int] = set()
+        self.escalation_counts = {
+            "raspberry_trips": 0,
+            "node_proposals": 0,
+            "hub_handoffs": 0,
+            "hub_alerts": 0,
+            "operator_confirms": 0,
+        }
+        self.verdict_latencies_ms: list[float] = []
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -202,9 +213,14 @@ class Pipeline:
                 }
                 for t in self._live_tracks
             ]
+            rasp = self.escalation_counts["raspberry_trips"]
+            node = self.escalation_counts["node_proposals"]
+            hub_h = self.escalation_counts["hub_handoffs"]
+            hub_a = self.escalation_counts["hub_alerts"]
+            confirms = self.escalation_counts["operator_confirms"]
             return {
                 "status": "ok" if self.status.running else "stopped",
-                "source": self.status.source,
+                "source": redact_source(self.status.source),
                 "opened": self.status.opened,
                 "fps": round(self.status.ingest_fps, 2),
                 "last_motion": self.status.last_motion,
@@ -222,6 +238,18 @@ class Pipeline:
                 "last_error": self.status.last_error,
                 "reconnects": self.status.reconnects,
                 "uptime_s": round(uptime, 1),
+                "escalation": {
+                    "mode": self.cfg.escalation.mode,
+                    "raspberry_trips": rasp,
+                    "node_proposals": node,
+                    "hub_handoffs": hub_h,
+                    "hub_alerts": hub_a,
+                    "operator_confirms": confirms,
+                    "node_per_raspberry": round(node / rasp, 3) if rasp else 0.0,
+                    "hub_per_node": round(hub_h / node, 3) if node else 0.0,
+                    "alerts_per_hub": round(hub_a / hub_h, 3) if hub_h else 0.0,
+                },
+                "auth_required": bool(self.cfg.server.api_token),
             }
 
     def ingest_frame(self, frame: np.ndarray, now: float | None = None) -> None:
@@ -253,6 +281,8 @@ class Pipeline:
             return None
         status = "confirmed" if action == "confirm" else "dismissed"
         updated = self.store.update_review(event_id, status)
+        if action == "confirm":
+            self.escalation_counts["operator_confirms"] += 1
         if action == "dismiss":
             features = row.get("features") or {}
             source = row.get("source") or str(self.cfg.camera.source)
@@ -285,7 +315,7 @@ class Pipeline:
                 self.status.opened = True
                 self.status.last_error = None
                 self.status.source = str(self.cfg.resolved_source())
-            log.info("Capture opened: %s", self.status.source)
+            log.info("Capture opened: %s", redact_source(self.status.source))
             self.motion.reset()
             self.tracker.reset()
             try:
@@ -493,22 +523,23 @@ class Pipeline:
         bag_ids = {t.track_id for t in bags}
         node_received = edge_upload
         named = bool(tracks) or bool(detections)
-        unsure = node_received and not named
-        still_high = bool(named and pol.confident and pol.score >= 0.7)
-        hub_needed = bool(node_received and (unsure or still_high or bag_ids))
-        if fusion and not fusion.badge_within_window and still_high:
-            hub_needed = True
+        no_badge = bool(fusion and not fusion.badge_within_window)
+        decision = decide_hub(
+            mode=self.cfg.escalation.mode,
+            node_received=node_received,
+            named=named,
+            bag=bool(bag_ids),
+            pol_confident=pol.confident,
+            pol_score=pol.score,
+            pol_min=self.cfg.escalation.pol_score_min,
+            no_badge=no_badge,
+        )
+        hub_needed = decision.hub_needed
+        # Fail-open: page until Hub adjudicates. Verifier may suppress.
         page_operator = hub_needed
-        if bags:
-            anomaly_reason = "unattended bag (track)"
-        elif unsure:
-            anomaly_reason = "Node could not name this"
-        elif still_high:
-            anomaly_reason = pol.reason or "still unusual after naming"
-        elif hub_needed and fusion and not fusion.badge_within_window:
-            anomaly_reason = "no badge within window"
-        else:
-            anomaly_reason = ""
+        anomaly_reason = decision.reason
+        if edge_upload:
+            self.escalation_counts["raspberry_trips"] += 1
         peak = max((d.conf for d in detections), default=0.0)
         labels = sorted({t.cls for t in tracks} | {d.cls for d in detections})
         hub_detail = fallback_summary(labels, peak, anomaly_reason) if hub_needed else ""
@@ -748,6 +779,7 @@ class Pipeline:
             last_frame=frame.copy(),
             last_dets=list(detections),
             fusion=fusion or {},
+            t0_mono=time.monotonic(),
         )
         if track_id is None:
             self._unnamed = active
@@ -756,6 +788,7 @@ class Pipeline:
             if track_id in self.tracker.tracks:
                 self.tracker.tracks[track_id].event_id = -1
         log.info("Event started track=%s classes=%s stop=%s", track_id, sorted(classes), stopped_at)
+        self.escalation_counts["node_proposals"] += 1
 
     def _finalize_track(self, track_id: int | None) -> None:
         if track_id is None:
@@ -851,6 +884,8 @@ class Pipeline:
                 verifier_provider="skipped",
                 verifier_status="node-closed",
             )
+            t0 = active.t0_mono or time.monotonic()
+            self.verdict_latencies_ms.append((time.monotonic() - t0) * 1000.0)
         if event_id and self.embeddings and self.cfg.events.write_media:
             self._index_embedding(event_id, active, classes)
         try:
@@ -908,7 +943,14 @@ class Pipeline:
             anomaly_reason=verdict.reason,
             verifier_provider=verdict.provider,
             verifier_status=verdict.status,
+            operator_status="pending" if verdict.alert else "",
+            stopped_at="operator" if verdict.alert else "hub",
         )
+        self.escalation_counts["hub_handoffs"] += 1
+        if verdict.alert:
+            self.escalation_counts["hub_alerts"] += 1
+        t0 = active.t0_mono or time.monotonic()
+        self.verdict_latencies_ms.append((time.monotonic() - t0) * 1000.0)
         self.mqtt.publish("verdict", {"id": event_id, **verdict.as_dict()})
         with self._lock:
             self.status.verifier_provider = verdict.provider
