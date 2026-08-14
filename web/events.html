@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TundraNVR — Events</title>
+  <style>
+    :root {
+      --bg: #121418;
+      --panel: #1c2027;
+      --line: #2b313c;
+      --text: #e8eaed;
+      --muted: #9aa3b2;
+      --accent: #7eb8ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }
+    header h1 { font-size: 16px; margin: 0; letter-spacing: 0.04em; }
+    nav a {
+      color: var(--accent);
+      text-decoration: none;
+      margin-left: 16px;
+      font-size: 14px;
+    }
+    main {
+      padding: 20px;
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 20px;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); }
+    th { color: var(--muted); font-weight: 600; }
+    tr { cursor: pointer; }
+    tr:hover, tr.active { background: #242a34; }
+    .thumb { width: 96px; height: 54px; object-fit: cover; background: #000; border-radius: 4px; }
+    video {
+      width: 100%;
+      background: #000;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+    }
+    .empty, .muted { color: var(--muted); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>TundraNVR</h1>
+    <nav>
+      <a href="/">Live</a>
+      <a href="/events">Events</a>
+    </nav>
+  </header>
+  <main>
+    <section>
+      <table>
+        <thead>
+          <tr>
+            <th></th>
+            <th>Time</th>
+            <th>Classes</th>
+            <th>Score</th>
+          </tr>
+        </thead>
+        <tbody id="rows">
+          <tr><td class="empty" colspan="4">Loading…</td></tr>
+        </tbody>
+      </table>
+    </section>
+    <section>
+      <video id="player" controls playsinline></video>
+      <p class="muted" id="detail">Select an event to play the clip.</p>
+    </section>
+  </main>
+  <script>
+    const rowsEl = document.getElementById("rows");
+    const player = document.getElementById("player");
+    const detail = document.getElementById("detail");
+
+    function fmt(ts) {
+      if (!ts) return "";
+      const d = new Date(ts);
+      return Number.isNaN(d.getTime()) ? ts : d.toLocaleString();
+    }
+
+    function play(event) {
+      for (const tr of rowsEl.querySelectorAll("tr")) tr.classList.remove("active");
+      const row = document.getElementById("evt-" + event.id);
+      if (row) row.classList.add("active");
+      if (event.clip_url) {
+        player.src = event.clip_url;
+        player.play().catch(() => {});
+      }
+      detail.textContent = `#${event.id}  ${fmt(event.ts_start)}  ${(event.classes || []).join(", ")}  score ${event.score ?? ""}`;
+    }
+
+    async function loadEvents() {
+      const res = await fetch("/api/events?limit=80");
+      const events = await res.json();
+      if (!events.length) {
+        rowsEl.innerHTML = `<tr><td class="empty" colspan="4">No events yet. Motion with a matching class will show up here.</td></tr>`;
+        return;
+      }
+      rowsEl.innerHTML = events.map((e) => `
+        <tr id="evt-${e.id}">
+          <td>${e.thumb_url ? `<img class="thumb" src="${e.thumb_url}" alt="" />` : ""}</td>
+          <td>${fmt(e.ts_start)}</td>
+          <td>${(e.classes || []).join(", ")}</td>
+          <td>${e.score ?? ""}</td>
+        </tr>
+      `).join("");
+      for (const e of events) {
+        const tr = document.getElementById("evt-" + e.id);
+        tr.addEventListener("click", () => play(e));
+      }
+      play(events[0]);
+    }
+    loadEvents();
+  </script>
+</body>
+</html>

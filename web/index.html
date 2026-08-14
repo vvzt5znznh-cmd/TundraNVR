@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TundraNVR — Live</title>
+  <style>
+    :root {
+      --bg: #121418;
+      --panel: #1c2027;
+      --line: #2b313c;
+      --text: #e8eaed;
+      --muted: #9aa3b2;
+      --accent: #7eb8ff;
+      --ok: #6fdd8b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }
+    header h1 { font-size: 16px; margin: 0; letter-spacing: 0.04em; }
+    nav a {
+      color: var(--accent);
+      text-decoration: none;
+      margin-left: 16px;
+      font-size: 14px;
+    }
+    main { padding: 20px; display: grid; gap: 16px; max-width: 1100px; margin: 0 auto; }
+    .live {
+      background: #000;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      min-height: 240px;
+    }
+    .live img { width: 100%; display: block; background: #000; }
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px 20px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .dot { color: var(--ok); }
+    .dets { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>TundraNVR</h1>
+    <nav>
+      <a href="/">Live</a>
+      <a href="/events">Events</a>
+    </nav>
+  </header>
+  <main>
+    <div class="live">
+      <img id="stream" alt="Live camera" src="/api/stream.mjpg" />
+    </div>
+    <div class="meta">
+      <span id="status"><span class="dot">●</span> connecting</span>
+      <span id="source"></span>
+      <span id="fps"></span>
+      <span id="motion"></span>
+      <span class="dets" id="dets"></span>
+    </div>
+  </main>
+  <script>
+    async function refreshHealth() {
+      try {
+        const res = await fetch("/health");
+        const data = await res.json();
+        const opened = data.opened ? "live" : "waiting";
+        document.getElementById("status").innerHTML =
+          `<span class="dot">●</span> ${opened}`;
+        document.getElementById("source").textContent = data.source || "";
+        document.getElementById("fps").textContent = `ingest ${data.fps || 0} fps`;
+        document.getElementById("motion").textContent = data.last_motion
+          ? `motion area ${data.motion_area}`
+          : "no motion";
+        const dets = (data.last_detections || [])
+          .map((d) => `${d.cls} ${d.conf}`)
+          .join(", ");
+        document.getElementById("dets").textContent = dets || "no objects";
+      } catch (err) {
+        document.getElementById("status").textContent = "health error";
+      }
+    }
+    refreshHealth();
+    setInterval(refreshHealth, 1500);
+  </script>
+</body>
+</html>
