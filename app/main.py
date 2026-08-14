@@ -18,6 +18,7 @@ from app.config import (
     save_runtime_settings,
 )
 from app.pipeline import Pipeline
+from app.version import VERSION, version_payload
 
 logging.basicConfig(
     level=logging.INFO,
@@ -46,14 +47,16 @@ async def lifespan(_app: FastAPI):
         pipeline.stop()
 
 
-app = FastAPI(title="TundraNVR", lifespan=lifespan)
+app = FastAPI(title="TundraNVR", version=VERSION, lifespan=lifespan)
 web_dir = cfg.web_dir
 app.mount("/media", StaticFiles(directory=str(cfg.data_dir)), name="media")
 
 
 @app.get("/health")
 def health() -> dict:
-    return pipeline.health()
+    payload = pipeline.health()
+    payload.update(version_payload())
+    return payload
 
 
 @app.get("/api/frame.jpg")
