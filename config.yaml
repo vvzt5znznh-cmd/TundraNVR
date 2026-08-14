@@ -1,8 +1,8 @@
 camera:
-  source: data/samples/entrance.mp4
+  source: 0
   width: 1280
   height: 720
-  loop_file: true
+  loop_file: false
 
 pipeline:
   detect_fps: 5
@@ -17,8 +17,6 @@ motion:
 detection:
   model: yolov8n.pt
   conf: 0.4
-  drone_model: drone-yolo.pt
-  drone_conf: 0.55
   classes:
     - person
     - bicycle

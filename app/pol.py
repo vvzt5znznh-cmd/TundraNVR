@@ -17,7 +17,7 @@ log = logging.getLogger(__name__)
 VIS_W = 32
 VIS_H = 18
 GRID = 8
-LEARN_SAMPLES = 80
+LEARN_GRID_N = 40  # confident = this many motion ticks on the occupancy grid
 SAVE_EVERY = 8
 
 
@@ -91,15 +91,17 @@ class PatternOfLife:
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
+            ticks = int(self.grid_n)
             return {
                 "source": self.source,
                 "key": self.key,
-                "samples": self.samples,
-                "learn_samples": LEARN_SAMPLES,
-                "progress": round(min(1.0, self.samples / max(LEARN_SAMPLES, 1)), 3),
-                "state": "confident" if self.samples >= LEARN_SAMPLES else "learning",
-                "confident": self.samples >= LEARN_SAMPLES,
-                "grid_n": int(self.grid_n),
+                "samples": ticks,
+                "learn_samples": LEARN_GRID_N,
+                "progress": round(min(1.0, ticks / max(LEARN_GRID_N, 1)), 3),
+                "state": "confident" if ticks >= LEARN_GRID_N else "learning",
+                "confident": ticks >= LEARN_GRID_N,
+                "grid_n": ticks,
+                "frame_samples": self.samples,
             }
 
     def observe(
@@ -116,7 +118,7 @@ class PatternOfLife:
             occ = self._occupancy_novelty(grid) if has_motion else 0.0
             spike = self._motion_spike(motion_area) if has_motion else 0.0
             score = max(vis_delta, occ, spike)
-            learning = self.samples < LEARN_SAMPLES
+            learning = self.grid_n < LEARN_GRID_N
             if learning and has_motion:
                 unusual = True
                 score = max(score, 0.45)
@@ -146,7 +148,7 @@ class PatternOfLife:
                 score=float(min(1.0, score)),
                 reason=reason,
                 state="learning" if learning else "confident",
-                samples=self.samples,
+                samples=int(self.grid_n),
                 visual_delta=float(vis_delta),
                 occupancy_novelty=float(occ),
                 motion_spike=float(spike),
@@ -262,7 +264,7 @@ class PatternOfLife:
             self.motion_sum += area
             self.motion_n += 1
             cell = np.clip(grid, 0.0, 1.0)
-            learning = self.samples < LEARN_SAMPLES
+            learning = self.grid_n < LEARN_GRID_N
             if force or learning or not unusual:
                 self.grid_counts += cell
                 self.grid_n += 1.0

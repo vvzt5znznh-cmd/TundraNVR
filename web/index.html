@@ -122,7 +122,9 @@
     function fillInternals(data) {
       const pol = data.pol || {};
       const edge = (data.handoff || {}).edge || {};
-      const need = pol.learn_samples || 80;
+      const node = (data.handoff || {}).node || {};
+      const hub = (data.handoff || {}).hub || {};
+      const need = pol.learn_samples || 40;
       const n = pol.samples || 0;
       const pct = Math.round((pol.progress || 0) * 100);
       const polPill = document.getElementById("polPill");
@@ -134,16 +136,24 @@
         polPill.classList.add("wait");
       }
       document.getElementById("polLine").textContent = pol.confident
-        ? "This camera’s Pattern of Life is confident (" + n + " ticks)."
-        : "Learning this camera’s usual look — " + n + " / " + need + " ticks. Edge uploads until then.";
+        ? "This camera’s Pattern of Life is confident (" + n + " motion ticks on the grid)."
+        : "Learning this camera’s usual footprint — " + n + " / " + need + " motion ticks. Edge uploads until then.";
       document.getElementById("polBar").style.width = Math.min(100, pct) + "%";
+      const namerName = shortName(data.model) || "yolov8n";
+      const namer = node.ran
+        ? namerName + " (ran this trip)"
+        : namerName + " (only on trips · idle)";
+      const captionOn = data.vision && data.vision !== "off";
+      const caption = captionOn
+        ? (data.vision + (hub.ran ? " (this event)" : " · only on Hub"))
+        : "off";
       const rows = [
-        ["Pattern of Life", (pol.confident ? "confident" : "learning") + " · " + n + " / " + need],
+        ["Pattern of Life", (pol.confident ? "confident" : "learning") + " · " + n + " / " + need + " motion ticks"],
         ["Unusual score", (edge.score != null ? Number(edge.score).toFixed(2) : "—") + (edge.reason ? " · " + edge.reason : "")],
         ["Occupancy / look", "place " + Number(edge.occupancy_novelty || 0).toFixed(2) + " · visual " + Number(edge.visual_delta || 0).toFixed(2)],
-        ["Detector", shortName(data.model)],
-        ["Drone model", shortName(data.drone_model)],
-        ["Caption", data.vision || "off"],
+        ["Motion", "frame difference (OpenCV, no neural net)"],
+        ["Namer", namer],
+        ["Caption", caption],
         ["Camera", data.source || currentSource || "—"],
         ["Ingest", (data.fps || 0) + " fps · motion " + (data.motion_area || 0)],
       ];
@@ -164,7 +174,7 @@
         const node = handoff.node || {};
         const hub = handoff.hub || {};
         const pol = data.pol || {};
-        const need = pol.learn_samples || 80;
+        const need = pol.learn_samples || 40;
         const n = pol.samples || 0;
         renderHandoff(handoff);
         fillInternals(data);
@@ -176,7 +186,7 @@
         card.classList.toggle("alert", Boolean(hub.page_operator && seat === "hub"));
         const learnBit = pol.confident
           ? ""
-          : " Learning " + n + "/" + need + ".";
+          : " Learning " + n + "/" + need + " motion ticks.";
         if (seat === "edge") {
           if (!data.last_motion) {
             scene.textContent = "Quiet";
@@ -184,19 +194,16 @@
           } else if (edge.upload) {
             scene.textContent = "Unusual";
             sub.textContent = (edge.reason || "Upload to Node.") + learnBit;
-          } else if (edge.prior_skip) {
-            scene.textContent = "Usual, policy skip";
-            sub.textContent = "Would stay local; Node still got it (drone / bag)." + learnBit;
           } else {
             scene.textContent = "Usual";
-            sub.textContent = "Stays on the Pi." + learnBit;
+            sub.textContent = "Stays on the Pi. No neural net." + learnBit;
           }
           objs.innerHTML = "";
         } else if (seat === "node") {
           const dets = node.received ? (node.classes || []) : [];
           if (!node.received) {
             scene.textContent = "Nothing from Edge";
-            sub.textContent = "Usual frames never arrive.";
+            sub.textContent = "Usual frames never arrive. Namer is idle.";
           } else if (node.closed) {
             scene.textContent = dets.map((d) => d.cls).join(", ") || "Named";
             sub.textContent = "Closed. Hub is not asked.";

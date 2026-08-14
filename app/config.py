@@ -65,10 +65,10 @@ def _as_source(value: Any) -> str | int:
 
 @dataclass
 class CameraConfig:
-    source: str | int = "data/samples/entrance.mp4"
+    source: str | int = 0
     width: int = 1280
     height: int = 720
-    loop_file: bool = True
+    loop_file: bool = False
 
 
 @dataclass
@@ -91,7 +91,7 @@ class DetectionConfig:
     conf: float = 0.4
     classes: list[str] = field(default_factory=lambda: list(BUILDING_CLASSES))
     device: str = "cpu"
-    drone_model: str = "drone-yolo.pt"
+    drone_model: str = ""
     drone_conf: float = 0.55
 
 
@@ -194,10 +194,10 @@ def load_config(path: Path | None = None) -> AppConfig:
 
     cfg = AppConfig(
         camera=CameraConfig(
-            source=_as_source(camera_raw.get("source", "data/samples/entrance.mp4")),
+            source=_as_source(camera_raw.get("source", 0)),
             width=int(camera_raw.get("width", 1280)),
             height=int(camera_raw.get("height", 720)),
-            loop_file=bool(camera_raw.get("loop_file", True)),
+            loop_file=bool(camera_raw.get("loop_file", False)),
         ),
         pipeline=PipelineConfig(
             detect_fps=float(pipeline_raw.get("detect_fps", 5)),
@@ -214,7 +214,7 @@ def load_config(path: Path | None = None) -> AppConfig:
             conf=float(detection_raw.get("conf", 0.4)),
             classes=list(detection_raw.get("classes") or BUILDING_CLASSES),
             device=str(detection_raw.get("device", "cpu")),
-            drone_model=str(detection_raw.get("drone_model", "drone-yolo.pt")),
+            drone_model=str(detection_raw.get("drone_model") or ""),
             drone_conf=float(detection_raw.get("drone_conf", 0.55)),
         ),
         events=EventsConfig(
@@ -293,6 +293,5 @@ def public_settings(cfg: AppConfig) -> dict[str, Any]:
     return {
         "source": str(cfg.camera.source),
         "model": cfg.detection.model,
-        "drone_model": cfg.detection.drone_model,
         "vision": cfg.vision.provider if cfg.vision.enabled else "off",
     }

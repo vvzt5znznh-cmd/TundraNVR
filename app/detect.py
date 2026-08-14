@@ -14,20 +14,6 @@ log = logging.getLogger(__name__)
 ALERT_OVERLAY = frozenset({"drone", "airplane"})
 
 
-def _iou(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
-    ax1, ay1, ax2, ay2 = a
-    bx1, by1, bx2, by2 = b
-    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
-    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
-    inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
-    if inter <= 0:
-        return 0.0
-    area_a = max(0, ax2 - ax1) * max(0, ay2 - ay1)
-    area_b = max(0, bx2 - bx1) * max(0, by2 - by1)
-    union = area_a + area_b - inter
-    return inter / union if union else 0.0
-
-
 @dataclass
 class Detection:
     cls: str
@@ -49,7 +35,7 @@ def _resolve_model(name: str) -> str:
 
 
 class ObjectDetector:
-    """YOLO detector plus an optional second model for drones."""
+    """YOLO namer. Call only on Edge trips — never as a motion sensor."""
 
     def __init__(
         self,
@@ -57,20 +43,14 @@ class ObjectDetector:
         conf: float = 0.4,
         classes: list[str] | None = None,
         device: str = "cpu",
-        drone_model: str = "",
-        drone_conf: float = 0.55,
     ) -> None:
         self.model_name = model
         self.conf = conf
         self.allowed = {normalize_class(name) for name in (classes or ["person", "car", "dog", "cat"])}
         self.allowed.add("drone")
         self.device = device
-        self.drone_model_name = (drone_model or "").strip()
-        self.drone_conf = drone_conf
         self._model = None
-        self._drone_model = None
         self._names: dict[int, str] = {}
-        self._drone_names: dict[int, str] = {}
         self._class_ids: list[int] | None = None
 
     def load(self) -> None:
@@ -79,7 +59,7 @@ class ObjectDetector:
         from ultralytics import YOLO
 
         primary = _resolve_model(self.model_name)
-        log.info("Loading YOLO model %s on %s", primary, self.device)
+        log.info("Loading YOLO namer %s on %s", primary, self.device)
         self._model = YOLO(primary)
         raw_names = self._model.names
         self._names = {int(k): str(v) for k, v in raw_names.items()}
@@ -91,55 +71,11 @@ class ObjectDetector:
         if not self._class_ids:
             log.warning("No YOLO classes matched allowlist %s", sorted(self.allowed))
             self._class_ids = None
-        log.info("YOLO ready; filtering classes %s", self._class_ids)
-
-        if not self.drone_model_name:
-            return
-        drone_path = _resolve_model(self.drone_model_name)
-        if not Path(drone_path).is_file():
-            log.warning("Drone model not found at %s; skipping drone detector", drone_path)
-            return
-        log.info("Loading drone model %s", drone_path)
-        self._drone_model = YOLO(drone_path)
-        raw_drone = self._drone_model.names
-        self._drone_names = {int(k): str(v) for k, v in raw_drone.items()}
-        log.info("Drone model classes %s", list(self._drone_names.values()))
+        log.info("YOLO namer ready; filtering classes %s", self._class_ids)
 
     def detect(self, frame: np.ndarray) -> list[Detection]:
         self.load()
-        detections = self._predict(
-            self._model,
-            frame,
-            self.conf,
-            self._names,
-            class_ids=self._class_ids,
-        )
-        if self._drone_model is not None:
-            drones = self._predict(
-                self._drone_model,
-                frame,
-                self.drone_conf,
-                self._drone_names,
-                class_ids=None,
-                force_drone=True,
-            )
-            detections.extend(self._filter_drone_overlaps(detections, drones))
-        return detections
-
-    @staticmethod
-    def _filter_drone_overlaps(
-        detections: list[Detection], drones: list[Detection]
-    ) -> list[Detection]:
-        """Drop drone boxes that sit on a person — common indoor false positives."""
-        people = [d for d in detections if d.cls == "person"]
-        if not people:
-            return drones
-        kept: list[Detection] = []
-        for drone in drones:
-            if any(_iou(drone.xyxy, person.xyxy) >= 0.25 for person in people):
-                continue
-            kept.append(drone)
-        return kept
+        return self._predict(self._model, frame, self.conf, self._names, self._class_ids)
 
     def _predict(
         self,
@@ -148,7 +84,6 @@ class ObjectDetector:
         conf: float,
         names: dict[int, str],
         class_ids: list[int] | None,
-        force_drone: bool = False,
     ) -> list[Detection]:
         kwargs: dict = {
             "source": frame,
@@ -168,7 +103,7 @@ class ObjectDetector:
         for box in result.boxes:
             cls_id = int(box.cls[0])
             raw = names.get(cls_id, str(cls_id)).lower()
-            name = "drone" if force_drone or raw in DRONE_ALIASES else normalize_class(raw)
+            name = "drone" if raw in DRONE_ALIASES else normalize_class(raw)
             if name not in self.allowed:
                 continue
             xyxy = box.xyxy[0].tolist()

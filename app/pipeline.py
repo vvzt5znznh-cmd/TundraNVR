@@ -11,7 +11,6 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from app.anomaly import classify_anomaly, normalize_class
 from app.config import AppConfig
 from app.db import EventStore, utc_now
 from app.detect import Detection, ObjectDetector, draw_edge_overlay, draw_overlay
@@ -45,6 +44,7 @@ class PipelineStatus:
     last_error: str | None = None
     reconnects: int = 0
     started_at: float = 0.0
+    yolo_ran: bool = False
 
 
 @dataclass
@@ -80,8 +80,6 @@ class Pipeline:
             conf=cfg.detection.conf,
             classes=cfg.detection.classes,
             device=cfg.detection.device,
-            drone_model=cfg.detection.drone_model,
-            drone_conf=cfg.detection.drone_conf,
         )
         self.store = EventStore(cfg.db_path)
         self.pol = PatternOfLife(cfg.pol_dir, cfg.camera.source)
@@ -111,6 +109,7 @@ class Pipeline:
         self._last_pol_unusual = False
         self._last_pol_reason = ""
         self._hub_banner = ""
+        self._yolo_ran = False
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -160,8 +159,8 @@ class Pipeline:
                 "handoff": dict(self.status.last_handoff),
                 "pol": self.pol.snapshot(),
                 "model": self.cfg.detection.model,
-                "drone_model": self.cfg.detection.drone_model,
                 "vision": self.cfg.vision.provider if self.cfg.vision.enabled else "off",
+                "yolo_ran": self.status.yolo_ran,
                 "last_error": self.status.last_error,
                 "reconnects": self.status.reconnects,
                 "uptime_s": round(uptime, 1),
@@ -190,13 +189,7 @@ class Pipeline:
         return updated
 
     def _run(self) -> None:
-        try:
-            self.detector.load()
-        except Exception as exc:
-            log.exception("Failed to load detector: %s", exc)
-            with self._lock:
-                self.status.last_error = f"detector: {exc}"
-
+        # YOLO loads lazily on the first Edge trip — motion + PoL never need it.
         cleanup_old_events(self.store, self.cfg.data_dir, self.cfg.events.retention_days)
         backoff = 1.0
         while not self._stop.is_set():
@@ -342,11 +335,13 @@ class Pipeline:
             self._last_pol_unusual,
             self._last_pol_reason,
         )
-        node_banner = "Node · Edge kept this locally"
+        node_banner = "Node · idle"
         if dets:
             node_banner = "Node · " + ", ".join(f"{d.cls} {d.conf:.2f}" for d in dets[:3])
+        elif self._yolo_ran:
+            node_banner = "Node · unnamed"
         elif self._has_motion:
-            node_banner = "Node · waiting for an Edge upload"
+            node_banner = "Node · Edge kept this locally"
         node = draw_overlay(frame, dets, self._motion_area, self._has_motion, banner=node_banner)
         hub_dets = dets if self._hub_banner else []
         hub_banner = self._hub_banner or "Hub idle — waiting for Node to escalate"
@@ -374,8 +369,12 @@ class Pipeline:
         self._last_pol_unusual = pol.unusual
         self._last_pol_reason = pol.reason
 
+        # Motion + PoL never call a neural net. YOLO only names Edge trips.
+        edge_upload = has_motion and (pol.unusual or not pol.confident)
         detections: list[Detection] = []
-        if has_motion:
+        yolo_ran = False
+        if edge_upload:
+            yolo_ran = True
             try:
                 detections = self.detector.detect(frame)
             except Exception as exc:
@@ -383,56 +382,46 @@ class Pipeline:
                 with self._lock:
                     self.status.last_error = f"detect: {exc}"
 
-        alert_set = {normalize_class(c) for c in self.cfg.monitoring.alert_classes}
-        prior = any(normalize_class(d.cls) in alert_set for d in detections)
-        anomaly = classify_anomaly(
-            [d.cls for d in detections],
-            expected=self.cfg.monitoring.expected_classes,
-            alert=self.cfg.monitoring.alert_classes,
-            unattended_bags=self.cfg.monitoring.unattended_bags,
-        )
-        edge_upload = has_motion and (pol.unusual or not pol.confident)
-        policy_skip = prior or anomaly.flagged
-        node_received = bool(detections) and (edge_upload or policy_skip)
-        hub_needed = False
-        page_operator = False
-        hub_detail = ""
-        if node_received:
-            hub_needed = bool(policy_skip or (pol.confident and pol.score >= 0.7))
-            page_operator = bool(policy_skip)
-            if hub_needed:
-                hub_detail = fallback_summary(
-                    sorted({d.cls for d in detections}),
-                    max(d.conf for d in detections),
-                    anomaly.reason,
-                )
+        node_received = edge_upload
+        named = bool(detections)
+        unsure = node_received and not named
+        still_high = bool(named and pol.confident and pol.score >= 0.7)
+        hub_needed = bool(node_received and (unsure or still_high))
+        page_operator = hub_needed
+        if unsure:
+            anomaly_reason = "Node could not name this"
+        elif still_high:
+            anomaly_reason = pol.reason or "still unusual after naming"
+        else:
+            anomaly_reason = ""
+        peak = max((d.conf for d in detections), default=0.0)
+        labels = sorted({d.cls for d in detections})
+        hub_detail = fallback_summary(labels, peak, anomaly_reason) if hub_needed else ""
         handoff = _handoff_payload(
             pol=pol,
             has_motion=has_motion,
             detections=detections,
-            prior=policy_skip,
+            yolo_ran=yolo_ran,
             node_received=node_received,
             hub_needed=hub_needed,
             page_operator=page_operator,
-            anomaly_reason=anomaly.reason,
+            anomaly_reason=anomaly_reason,
             hub_detail=hub_detail,
         )
         stopped = handoff["stopped_at"]
+        self._yolo_ran = yolo_ran
 
         if node_received:
             self._last_dets = detections
             self._overlay_until = now + self._overlay_ttl
             payload = [{"cls": d.cls, "conf": round(d.conf, 3)} for d in detections]
-            scene = hub_detail or fallback_summary(
-                sorted({d.cls for d in detections}),
-                max(d.conf for d in detections),
-                anomaly.reason,
-            )
+            scene = hub_detail or fallback_summary(labels, peak, anomaly_reason)
             self._hub_banner = ("Hub · " + hub_detail) if hub_needed else ""
             with self._lock:
+                self.status.yolo_ran = yolo_ran
                 self.status.last_detections = payload
                 self.status.last_scene = scene
-                self.status.last_anomaly = anomaly.reason if page_operator else ""
+                self.status.last_anomaly = anomaly_reason if page_operator else ""
                 self.status.last_handoff = handoff
             self._on_match(
                 frame,
@@ -440,7 +429,7 @@ class Pipeline:
                 now,
                 hub_needed=hub_needed,
                 page_operator=page_operator,
-                anomaly_reason=anomaly.reason,
+                anomaly_reason=anomaly_reason,
                 pol_score=pol.score,
                 stopped_at=stopped,
                 handoff=handoff,
@@ -448,12 +437,13 @@ class Pipeline:
             )
         else:
             self._hub_banner = ""
+            self._last_dets = []
+            self._yolo_ran = False
             with self._lock:
-                if now > self._overlay_until:
-                    self.status.last_detections = []
-                    self.status.last_anomaly = ""
-                    self.status.last_scene = pol.reason if has_motion else "Quiet."
-                    self._last_dets = []
+                self.status.yolo_ran = False
+                self.status.last_detections = []
+                self.status.last_anomaly = ""
+                self.status.last_scene = pol.reason if has_motion else "Quiet."
                 self.status.last_handoff = handoff
 
     def _on_match(
@@ -471,7 +461,7 @@ class Pipeline:
         features: dict,
     ) -> None:
         classes = {d.cls for d in detections}
-        score = max(d.conf for d in detections)
+        score = max((d.conf for d in detections), default=0.0)
         with self._event_lock:
             if self._active is not None:
                 self._active.last_match_at = now
@@ -653,7 +643,7 @@ def _handoff_payload(
     pol,
     has_motion: bool,
     detections: list[Detection],
-    prior: bool,
+    yolo_ran: bool,
     node_received: bool,
     hub_needed: bool,
     page_operator: bool,
@@ -669,8 +659,6 @@ def _handoff_payload(
     else:
         edge_decision = "usual"
         edge_detail = f"{pol.score:.2f} · {pol.reason}"
-        if prior:
-            edge_detail += " · policy skip to Node"
 
     labels = ", ".join(f"{d.cls} {d.conf:.2f}" for d in detections[:4]) or "unnamed"
     steps = [
@@ -687,7 +675,7 @@ def _handoff_payload(
                 "stage": "node",
                 "label": "Node",
                 "decision": "skipped",
-                "detail": "Edge kept this locally",
+                "detail": "Edge kept this locally · namer idle",
             }
         )
         steps.append(
@@ -772,16 +760,15 @@ def _handoff_payload(
             stopped = "node"
 
     edge_info = pol.as_dict()
-    edge_info["upload"] = bool(node_received and edge_decision != "quiet" and (pol.unusual or not pol.confident))
-    edge_info["prior_skip"] = bool(prior and not (pol.unusual or not pol.confident))
+    edge_info["upload"] = bool(edge_decision == "unusual")
     return {
         "stopped_at": stopped,
         "steps": steps,
         "edge": edge_info,
         "node": {
             "received": node_received,
+            "ran": yolo_ran,
             "closed": node_received and not hub_needed,
-            "prior": prior,
             "classes": [{"cls": d.cls, "conf": round(d.conf, 3)} for d in detections],
         },
         "hub": {
