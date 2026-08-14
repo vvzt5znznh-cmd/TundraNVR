@@ -31,6 +31,13 @@ from app.zones import Zone, ZoneMap
 log = logging.getLogger(__name__)
 
 
+def _encode_jpeg(frame: np.ndarray, quality: int) -> bytes:
+    ok, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+    if not ok:
+        return b""
+    return buf.tobytes()
+
+
 def _placeholder_jpeg(width: int, height: int, quality: int) -> bytes:
     w, h = max(width or 1280, 320), max(height or 720, 180)
     frame = np.zeros((h, w, 3), dtype=np.uint8)
