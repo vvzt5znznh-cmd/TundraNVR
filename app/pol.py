@@ -215,14 +215,21 @@ class PatternOfLife:
         return self.grid_counts / float(self.grid_n)
 
     def _occupancy_novelty(self, grid: np.ndarray) -> float:
-        active = grid > 0.12
-        if not np.any(active):
+        """How much of *this* frame's motion sits outside this camera's usual footprint."""
+        motion = np.clip(grid, 0.0, 1.0)
+        total = float(motion.sum())
+        if total < 1e-6:
             return 0.0
-        if self.grid_n < 12:
+        if self.grid_n < 20:
             return 0.35
         freq = self._usual_freq()
-        rarity = 1.0 - np.clip(freq[active] / 0.25, 0.0, 1.0)
-        return float(np.clip(rarity.mean(), 0.0, 1.0))
+        peak = float(freq.max())
+        if peak < 0.005:
+            return 0.35
+        # Cells this camera has actually used, relative to its own hottest cell.
+        hot = freq >= max(0.2 * peak, 1e-4)
+        on_hot = float((motion * hot).sum() / total)
+        return float(np.clip(1.0 - on_hot, 0.0, 1.0))
 
     def _motion_spike(self, area: int) -> float:
         typical = self.motion_sum / max(self.motion_n, 1)
