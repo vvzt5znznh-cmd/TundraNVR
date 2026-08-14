@@ -48,11 +48,11 @@ Or point `camera.source` in `config.yaml` at an RTSP URL, HTTP stream, local fil
 python -m app.main
 ```
 
-Then open http://127.0.0.1:8000 — live view — and http://127.0.0.1:8000/events for history.
+Then open http://127.0.0.1:8000 — live view — and http://127.0.0.1:8000/events for history. The header shows the app version.
 
 | Route | Role |
 | --- | --- |
-| `GET /health` | ingest status, fps, last motion/detections |
+| `GET /health` | ingest status, fps, last motion/detections, app version |
 | `GET /api/frame.jpg` | latest JPEG (with overlay) |
 | `GET /api/stream.mjpg` | live MJPEG |
 | `GET /api/events` | recent events JSON |

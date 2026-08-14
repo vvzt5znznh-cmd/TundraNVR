@@ -29,7 +29,13 @@
       border-bottom: 1px solid var(--line);
       background: var(--panel);
     }
+    .brand { display: flex; align-items: baseline; gap: 10px; }
     header h1 { font-size: 16px; margin: 0; letter-spacing: 0.04em; }
+    #version {
+      color: var(--muted);
+      font-size: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
     nav a {
       color: var(--accent);
       text-decoration: none;
@@ -97,7 +103,10 @@
 </head>
 <body>
   <header>
-    <h1>TundraNVR</h1>
+    <div class="brand">
+      <h1>TundraNVR</h1>
+      <span id="version"></span>
+    </div>
     <nav>
       <a href="/">Live</a>
       <a href="/events">Events</a>
@@ -149,6 +158,9 @@
           .map((d) => `${d.cls} ${d.conf}`)
           .join(", ");
         document.getElementById("dets").textContent = dets || "no objects";
+        if (data.display) {
+          document.getElementById("version").textContent = data.display;
+        }
       } catch (err) {
         document.getElementById("status").textContent = "health error";
       }
