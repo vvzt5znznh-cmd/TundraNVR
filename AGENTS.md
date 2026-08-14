@@ -6,6 +6,9 @@ Local camera-detection MVP: camera/video file → motion filter → YOLO object 
 
 Single Python service. There are no tests or linters configured in this repo.
 
+### Git / pull requests
+Cloud Agents in this environment can push feature branches and open pull requests against `main`.
+
 ### Environment
 - Python 3.12 in a `.venv` at the repo root. Dependencies (including the correct CPU builds of `torch`/`torchvision`) are installed by the startup update script, so you normally do not reinstall them.
 - Activate the venv before running anything: `. .venv/bin/activate`.
