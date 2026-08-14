@@ -25,12 +25,14 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-If `torch` installs a CUDA wheel on a CPU-only machine, install the CPU build first:
+If `torch` installs a CUDA wheel on a CPU-only machine, install the CPU builds first:
 
 ```bash
-pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt
 ```
+
+`torchvision` must come from the same PyTorch CPU index; a PyPI wheel can fail with `operator torchvision::nms does not exist`.
 
 Download a short sample clip (people walking) so you can run without a camera:
 
