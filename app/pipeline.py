@@ -443,7 +443,7 @@ class Pipeline:
         page_operator = False
         hub_detail = ""
         if node_received:
-            hub_needed = bool(policy_skip or pol.score >= 0.7)
+            hub_needed = bool(policy_skip or (pol.confident and pol.score >= 0.7))
             page_operator = bool(policy_skip)
             if hub_needed:
                 hub_detail = fallback_summary(
@@ -527,8 +527,10 @@ class Pipeline:
                 if anomaly_reason:
                     self._active.anomaly_reason = anomaly_reason
                 self._active.pol_score = max(self._active.pol_score, pol_score)
-                self._active.stopped_at = stopped_at
-                self._active.handoff = handoff
+                rank = {"edge": 0, "node": 1, "hub": 2, "operator": 3}
+                if rank.get(stopped_at, 0) >= rank.get(self._active.stopped_at, 0):
+                    self._active.stopped_at = stopped_at
+                    self._active.handoff = handoff
                 return
             if now < self._cooldown_until:
                 return
@@ -620,6 +622,12 @@ class Pipeline:
         if not anomaly_reason and anomaly_flag:
             anomaly_reason = "escalated to operator"
         operator_status = "pending" if active.page_operator else ""
+        if active.page_operator:
+            active.stopped_at = "operator"
+        elif active.hub_needed:
+            active.stopped_at = "hub"
+        else:
+            active.stopped_at = "node"
         node_note = ""
         if active.hub_needed:
             node_note = fallback_summary(classes, score, anomaly_reason)

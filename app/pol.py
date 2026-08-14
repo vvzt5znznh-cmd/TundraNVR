@@ -77,7 +77,7 @@ class PatternOfLife:
         self.path = directory / f"{self.key}.json"
         self._lock = threading.Lock()
         self.samples = 0
-        self.grid_n = 0
+        self.grid_n = 0.0
         self.grid_counts = np.zeros((GRID, GRID), dtype=np.float32)
         self.visual_mean = np.zeros((VIS_H, VIS_W), dtype=np.float32)
         self.visual_ready = False
@@ -97,7 +97,7 @@ class PatternOfLife:
                 "samples": self.samples,
                 "state": "confident" if self.samples >= LEARN_SAMPLES else "learning",
                 "confident": self.samples >= LEARN_SAMPLES,
-                "grid_n": self.grid_n,
+                "grid_n": int(self.grid_n),
             }
 
     def observe(
@@ -252,9 +252,15 @@ class PatternOfLife:
             self.hour_n[hour] += 1
             self.motion_sum += area
             self.motion_n += 1
-            if force or not unusual:
-                self.grid_counts += np.clip(grid, 0.0, 1.0)
-                self.grid_n += 1
+            cell = np.clip(grid, 0.0, 1.0)
+            learning = self.samples < LEARN_SAMPLES
+            if force or learning or not unusual:
+                self.grid_counts += cell
+                self.grid_n += 1.0
+            else:
+                # Repeating "unusual" motion must still be able to become usual.
+                self.grid_counts += 0.12 * cell
+                self.grid_n += 0.12
         self.samples += 1
         self._dirty += 1
         if force or self._dirty >= SAVE_EVERY:
@@ -270,7 +276,7 @@ class PatternOfLife:
             log.warning("Could not read PoL profile %s", self.path)
             return
         self.samples = int(data.get("samples") or 0)
-        self.grid_n = int(data.get("grid_n") or 0)
+        self.grid_n = float(data.get("grid_n") or 0)
         self.grid_counts = _as_grid(data.get("grid_counts"))
         mean = data.get("visual_mean")
         if mean is not None:
