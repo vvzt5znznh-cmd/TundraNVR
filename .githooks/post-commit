@@ -1,0 +1,14 @@
+#!/bin/sh
+# Last resort if a hook was skipped (--no-verify) but the trailer still landed.
+set -eu
+[ -z "${TUNDRA_STRIP_COAUTHOR:-}" ] || exit 0
+
+msg=$(git log -1 --format=%B)
+printf '%s\n' "$msg" | grep -qE 'Prez0@users\.noreply\.github\.com|10711862\+Prez0@' || exit 0
+
+tmp=$(mktemp)
+trap 'rm -f "$tmp"' EXIT
+printf '%s\n' "$msg" | grep -vE 'Prez0@users\.noreply\.github\.com|10711862\+Prez0@' > "$tmp" || true
+
+export TUNDRA_STRIP_COAUTHOR=1
+git commit --amend -F "$tmp" --no-verify

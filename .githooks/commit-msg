@@ -1,0 +1,11 @@
+#!/bin/sh
+# Second pass: Cursor may inject its session-initiator trailer in commit-msg.
+set -eu
+msgfile=${1:-}
+[ -n "$msgfile" ] && [ -f "$msgfile" ] || exit 0
+
+tmp=$(mktemp)
+trap 'rm -f "$tmp"' EXIT
+
+grep -vE 'Prez0@users\.noreply\.github\.com|10711862\+Prez0@' "$msgfile" > "$tmp" || true
+cat "$tmp" > "$msgfile"

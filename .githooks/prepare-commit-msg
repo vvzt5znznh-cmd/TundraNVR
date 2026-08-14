@@ -1,0 +1,18 @@
+#!/bin/sh
+# Cursor Cloud Agents append Co-authored-by for the Cursor account's GitHub
+# user. Rewrite that to this repo's owner, and insert that trailer first so
+# Cursor's commit-msg.cursor.co-author hook does not add a second identity.
+set -eu
+msgfile=${1:-}
+[ -n "$msgfile" ] && [ -f "$msgfile" ] || exit 0
+
+tmp=$(mktemp)
+trap 'rm -f "$tmp"' EXIT
+
+grep -vE 'Prez0@users\.noreply\.github\.com|10711862\+Prez0@' "$msgfile" > "$tmp" || true
+
+if ! grep -qE '^Co-authored-by:[[:space:]]*vvzt5znznh-cmd' "$tmp"; then
+  printf '\nCo-authored-by: vvzt5znznh-cmd <vvzt5znznh-cmd@users.noreply.github.com>\n' >> "$tmp"
+fi
+
+cat "$tmp" > "$msgfile"

@@ -6,6 +6,9 @@ Local camera-detection MVP: camera/video file → motion filter → YOLO object 
 
 Single Python service. There are no tests or linters configured in this repo.
 
+### Git attribution
+Cloud Agents always add a `Co-authored-by` trailer for the Cursor account's linked GitHub user. This repo should only surface `vvzt5znznh-cmd` and `cursoragent`. After clone, run `sh scripts/install-git-hooks.sh` (sets `core.hooksPath` to `.githooks`). `.mailmap` folds any leftover session identity into `vvzt5znznh-cmd` for GitHub's Contributors list. Do not add other `Co-authored-by` trailers.
+
 ### Environment
 - Python 3.12 in a `.venv` at the repo root. Dependencies (including the correct CPU builds of `torch`/`torchvision`) are installed by the startup update script, so you normally do not reinstall them.
 - Activate the venv before running anything: `. .venv/bin/activate`.

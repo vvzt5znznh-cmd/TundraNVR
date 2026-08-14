@@ -1,0 +1,8 @@
+# Display-only identity map (does not rewrite git objects).
+# GitHub uses this for the Contributors sidebar, Insights, and co-author chips.
+# Cursor Cloud Agents co-author as the Cursor account's GitHub user; fold that
+# onto this repo's owner. Also covers immutable refs/pull/* commits.
+vvzt5znznh-cmd <317066401+vvzt5znznh-cmd@users.noreply.github.com> JonasL <Prez0@users.noreply.github.com>
+vvzt5znznh-cmd <317066401+vvzt5znznh-cmd@users.noreply.github.com> Prez0 <Prez0@users.noreply.github.com>
+vvzt5znznh-cmd <317066401+vvzt5znznh-cmd@users.noreply.github.com> <Prez0@users.noreply.github.com>
+vvzt5znznh-cmd <317066401+vvzt5znznh-cmd@users.noreply.github.com> <10711862+Prez0@users.noreply.github.com>
