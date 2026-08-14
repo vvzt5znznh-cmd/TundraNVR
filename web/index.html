@@ -13,6 +13,7 @@
       --muted: #9aa3b2;
       --accent: #7eb8ff;
       --ok: #6fdd8b;
+      --alert: #ff8b8b;
     }
     * { box-sizing: border-box; }
     body {
@@ -110,6 +111,7 @@
       font-size: 12px;
     }
     .chips button:hover { border-color: var(--accent); }
+    .hint { margin: 0; color: var(--muted); font-size: 12px; }
     .msg { font-size: 13px; color: var(--muted); min-height: 1.2em; }
     .msg.err { color: #ff8b8b; }
     .msg.ok { color: var(--ok); }
@@ -136,14 +138,16 @@
       <span id="fps"></span>
       <span id="motion"></span>
       <span class="dets" id="dets"></span>
+      <span id="scene"></span>
+      <span id="alert"></span>
     </div>
     <form class="settings" id="settings">
       <h2>Source and model</h2>
-      <p>File path, webcam index (<code>0</code>), or RTSP/HTTP URL. Pick a sample clip or type your own. A new model name is downloaded on first use. Stock YOLO has no drone class.</p>
+      <p>Fixed CCTV, file path, webcam index (<code>0</code>), or RTSP/HTTP URL. Samples are static building cameras. People and vehicles use YOLO; drones use a second UAV model.</p>
       <div class="fields">
         <label>Video source
           <input id="sourceInput" name="source" list="sourceOptions" autocomplete="off" spellcheck="false"
-            placeholder="data/samples/city.mp4" />
+            placeholder="data/samples/entrance.mp4" />
         </label>
         <label>YOLO model
           <input id="modelInput" name="model" list="modelOptions" autocomplete="off" spellcheck="false"
@@ -154,6 +158,9 @@
       <datalist id="sourceOptions"></datalist>
       <datalist id="modelOptions"></datalist>
       <div class="chips" id="sourceChips"></div>
+      <p class="hint">Optional public street stills (NYC DOT) — not a building camera.</p>
+      <div class="chips" id="webcamChips"></div>
+      <p class="hint" id="visionHint"></p>
       <div class="msg" id="settingsMsg"></div>
     </form>
   </main>
@@ -174,6 +181,14 @@
           .map((d) => `${d.cls} ${d.conf}`)
           .join(", ");
         document.getElementById("dets").textContent = dets || "no objects";
+        document.getElementById("scene").textContent = data.last_scene || "";
+        const alertEl = document.getElementById("alert");
+        if (data.last_anomaly) {
+          alertEl.textContent = data.last_anomaly;
+          alertEl.style.color = "var(--alert)";
+        } else {
+          alertEl.textContent = "";
+        }
         if (data.display) {
           document.getElementById("version").textContent = data.display;
         }
@@ -189,6 +204,7 @@
     const sourceChips = document.getElementById("sourceChips");
     const modelInput = document.getElementById("modelInput");
     const modelOptions = document.getElementById("modelOptions");
+    const webcamChips = document.getElementById("webcamChips");
     const applyBtn = document.getElementById("apply");
     const settingsMsg = document.getElementById("settingsMsg");
 
@@ -218,6 +234,22 @@
           sourceInput.value = btn.getAttribute("data-path") || "";
         });
       });
+      const cams = data.suggested_webcams || [];
+      sourceOptions.innerHTML += cams
+        .map((s) => `<option value="${s.path}"></option>`)
+        .join("");
+      webcamChips.innerHTML = cams
+        .map((s) => `<button type="button" data-path="${s.path}">${s.label}</button>`)
+        .join("");
+      webcamChips.querySelectorAll("button").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          sourceInput.value = btn.getAttribute("data-path") || "";
+        });
+      });
+      const vis = data.vision || {};
+      document.getElementById("visionHint").textContent = vis.enabled
+        ? `Scene log: ${vis.provider}. Drones and unexpected objects are flagged as alerts.`
+        : "Scene notes are off.";
     }
 
     document.getElementById("settings").addEventListener("submit", async (ev) => {

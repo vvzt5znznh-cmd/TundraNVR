@@ -5,19 +5,24 @@ from dataclasses import dataclass, field
 import logging
 import threading
 import time
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
 import cv2
 import numpy as np
 
+from app.anomaly import classify_anomaly
 from app.config import AppConfig
 from app.db import EventStore, utc_now
 from app.detect import Detection, ObjectDetector, draw_overlay
 from app.motion import MotionDetector
 from app.record import ClipWriter, cleanup_old_events, save_thumb
+from app.vision import describe_event, fallback_summary
 
 log = logging.getLogger(__name__)
+_SNAPSHOT_UA = "TundraNVR/0.5"
 
 
 def _encode_jpeg(frame: np.ndarray, quality: int) -> bytes:
@@ -36,6 +41,8 @@ class PipelineStatus:
     last_motion: bool = False
     motion_area: int = 0
     last_detections: list[dict] = field(default_factory=list)
+    last_scene: str = ""
+    last_anomaly: str = ""
     last_error: str | None = None
     reconnects: int = 0
     started_at: float = 0.0
@@ -66,6 +73,8 @@ class Pipeline:
             conf=cfg.detection.conf,
             classes=cfg.detection.classes,
             device=cfg.detection.device,
+            drone_model=cfg.detection.drone_model,
+            drone_conf=cfg.detection.drone_conf,
         )
         self.store = EventStore(cfg.db_path)
         self.status = PipelineStatus(source=str(cfg.resolved_source()))
@@ -120,6 +129,8 @@ class Pipeline:
                 "last_motion": self.status.last_motion,
                 "motion_area": self.status.motion_area,
                 "last_detections": list(self.status.last_detections),
+                "last_scene": self.status.last_scene,
+                "last_anomaly": self.status.last_anomaly,
                 "last_error": self.status.last_error,
                 "reconnects": self.status.reconnects,
                 "uptime_s": round(uptime, 1),
@@ -136,8 +147,9 @@ class Pipeline:
         cleanup_old_events(self.store, self.cfg.data_dir, self.cfg.events.retention_days)
         backoff = 1.0
         while not self._stop.is_set():
-            cap = self._open_capture()
-            if cap is None or not cap.isOpened():
+            snapshot = self._is_http_snapshot()
+            cap = None if snapshot else self._open_capture()
+            if not snapshot and (cap is None or not cap.isOpened()):
                 with self._lock:
                     self.status.opened = False
                     self.status.last_error = "capture not opened"
@@ -150,12 +162,14 @@ class Pipeline:
             with self._lock:
                 self.status.opened = True
                 self.status.last_error = None
+                self.status.source = str(self.cfg.resolved_source())
             log.info("Capture opened: %s", self.status.source)
             self.motion.reset()
             try:
                 self._ingest_loop(cap)
             finally:
-                cap.release()
+                if cap is not None:
+                    cap.release()
                 with self._lock:
                     self.status.opened = False
             if not self._stop.is_set():
@@ -175,7 +189,7 @@ class Pipeline:
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.cfg.camera.height)
         return cap
 
-    def _ingest_loop(self, cap: cv2.VideoCapture) -> None:
+    def _ingest_loop(self, cap: cv2.VideoCapture | None) -> None:
         detect_interval = 1.0 / max(self.cfg.pipeline.detect_fps, 0.1)
         live_interval = 1.0 / max(self.cfg.pipeline.live_fps, 1.0)
         clip_interval = 1.0 / max(self.cfg.events.clip_fps, 1.0)
@@ -186,15 +200,27 @@ class Pipeline:
         frames = 0
         consecutive_fail = 0
         loop_fails = 0
-        native_fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+        native_fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0) if cap is not None else 0.0
         pace_file = self._is_file_source() and native_fps > 1
         frame_interval = 1.0 / native_fps if pace_file else 0.0
         next_frame_at = time.monotonic()
+        snapshot = self._is_http_snapshot()
 
         while not self._stop.is_set():
-            ok, frame = cap.read()
+            if snapshot:
+                frame = self._read_http_snapshot()
+                ok = frame is not None
+            else:
+                ok, frame = cap.read()
             if not ok or frame is None:
                 consecutive_fail += 1
+                if snapshot:
+                    if consecutive_fail >= 8:
+                        log.warning("Snapshot fetch failed %s times", consecutive_fail)
+                        return
+                    if self._stop.wait(1.5):
+                        return
+                    continue
                 if self._is_file_source() and self.cfg.camera.loop_file:
                     loop_fails += 1
                     log.debug("End of file; looping source")
@@ -239,7 +265,10 @@ class Pipeline:
                 last_detect = now
                 self._process_detect(frame, now)
 
-            if frame_interval:
+            if snapshot:
+                if self._stop.wait(1.5):
+                    break
+            elif frame_interval:
                 next_frame_at += frame_interval
                 delay = next_frame_at - time.monotonic()
                 if delay > 0:
@@ -255,6 +284,35 @@ class Pipeline:
         if "://" in str(source):
             return False
         return Path(source).is_file()
+
+    def _is_http_snapshot(self) -> bool:
+        source = self.cfg.resolved_source()
+        if isinstance(source, int):
+            return False
+        text = str(source).lower()
+        if "://" not in text:
+            return False
+        return text.endswith((".jpg", ".jpeg", ".png")) or text.rstrip("/").endswith("/image")
+
+    def _read_http_snapshot(self) -> np.ndarray | None:
+        source = self.cfg.resolved_source()
+        url = str(source)
+        req = urllib.request.Request(url, headers={"User-Agent": _SNAPSHOT_UA})
+        try:
+            with urllib.request.urlopen(req, timeout=12) as resp:
+                data = resp.read()
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            log.debug("Snapshot fetch failed: %s", exc)
+            with self._lock:
+                self.status.last_error = f"snapshot: {exc}"
+            return None
+        arr = np.frombuffer(data, dtype=np.uint8)
+        frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if frame is None:
+            with self._lock:
+                self.status.last_error = "snapshot: could not decode image"
+            return None
+        return frame
 
     def _resize(self, frame: np.ndarray) -> np.ndarray:
         h, w = frame.shape[:2]
@@ -290,8 +348,18 @@ class Pipeline:
             self._last_dets = detections
             self._overlay_until = now + self._overlay_ttl
             payload = [{"cls": d.cls, "conf": round(d.conf, 3)} for d in detections]
+            classes = [d.cls for d in detections]
+            anomaly = classify_anomaly(
+                classes,
+                expected=self.cfg.monitoring.expected_classes,
+                alert=self.cfg.monitoring.alert_classes,
+                unattended_bags=self.cfg.monitoring.unattended_bags,
+            )
+            scene = fallback_summary(sorted(set(classes)), max(d.conf for d in detections), anomaly.reason)
             with self._lock:
                 self.status.last_detections = payload
+                self.status.last_scene = scene
+                self.status.last_anomaly = anomaly.reason
             self._on_match(frame, detections, now)
         else:
             with self._lock:
@@ -360,20 +428,61 @@ class Pipeline:
             active.writer.close()
         except Exception:
             log.exception("Error closing clip writer")
+        event_id = None
+        classes = sorted(active.classes)
+        score = round(active.score, 3)
+        anomaly = classify_anomaly(
+            classes,
+            expected=self.cfg.monitoring.expected_classes,
+            alert=self.cfg.monitoring.alert_classes,
+            unattended_bags=self.cfg.monitoring.unattended_bags,
+        )
         try:
-            self.store.insert(
+            event_id = self.store.insert(
                 ts_start=active.ts_start,
                 ts_end=utc_now(),
-                classes=sorted(active.classes),
-                score=round(active.score, 3),
+                classes=classes,
+                score=score,
                 thumb_path=f"thumbs/{active.thumb_name}",
                 clip_path=f"clips/{active.clip_name}",
+                anomaly=anomaly.flagged,
+                anomaly_reason=anomaly.reason,
             )
         except Exception:
             log.exception("Failed to persist event")
         self._cooldown_until = time.monotonic() + self.cfg.events.cooldown_seconds
-        log.info("Event saved %s", active.clip_name)
+        log.info(
+            "Event saved %s anomaly=%s %s",
+            active.clip_name,
+            anomaly.flagged,
+            anomaly.reason,
+        )
+        if event_id:
+            thumb = self.cfg.thumbs_dir / active.thumb_name
+            threading.Thread(
+                target=self._describe_event,
+                args=(event_id, thumb, classes, score, anomaly.reason),
+                name=f"nvr-vision-{event_id}",
+                daemon=True,
+            ).start()
         try:
             cleanup_old_events(self.store, self.cfg.data_dir, self.cfg.events.retention_days)
         except Exception:
             log.exception("Retention cleanup failed")
+
+    def _describe_event(
+        self,
+        event_id: int,
+        thumb: Path,
+        classes: list[str],
+        score: float,
+        anomaly_reason: str,
+    ) -> None:
+        try:
+            summary, provider = describe_event(
+                self.cfg.vision, thumb, classes, score, anomaly_reason
+            )
+            self.store.update_summary(event_id, summary)
+            log.info("Event %s described via %s", event_id, provider)
+        except Exception:
+            log.exception("Vision summary failed for event %s", event_id)
