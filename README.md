@@ -62,23 +62,6 @@ Then open http://127.0.0.1:8000 — live view — and http://127.0.0.1:8000/even
 
 YOLO downloads `yolov8n.pt` on first detection run.
 
-## Stay local — do not re-clone
-
-The UI and the model already run on **the same machine** that started `python -m app.main`. Changing source or model in the browser does not hit GitHub and does not re-download the repo. Weights (`yolov8n.pt`, …) sit in the project folder after the first fetch.
-
-Clone **once**. After that:
-
-| You want to… | Do this |
-| --- | --- |
-| Point at another file, webcam (`0`), or RTSP | Live page → Apply (writes `data/settings.json`) |
-| Try a different YOLO size | Live page → pick `yolov8s.pt` / `yolo11n.pt` → Apply (downloads that `.pt` once) |
-| Pick up code from GitHub | `./scripts/update.sh` (or `git pull`), then restart the app |
-| Reinstall Python packages | Only if `requirements.txt` changed |
-
-Do **not** clone into a new folder each time. That re-downloads torch (~hundreds of MB) and throws away your venv, events, and weights. `git pull` updates a few source files; `.venv/`, `*.pt`, and `data/` stay put.
-
-A split “UI in the cloud, YOLO on the Mac” setup is more moving parts than this MVP needs. Run the app on the MacBook; use the browser on that same machine (http://127.0.0.1:8000). If you edit in Cursor Cloud, pull those commits locally instead of starting from a fresh clone.
-
 ## Config keys
 
 See [`config.yaml`](config.yaml). The live page **Apply** button writes `data/settings.json`, which overrides `camera.source` and `detection.model` until you delete that file.
