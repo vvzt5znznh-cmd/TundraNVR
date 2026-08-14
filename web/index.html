@@ -26,6 +26,7 @@
       <div class="hud">
         <span class="pill wait" id="status">Connecting</span>
         <span class="pill" id="seatPill">Raspberry</span>
+        <span class="pill" id="polPill">Learning…</span>
       </div>
     </section>
     <section class="scene-card" id="sceneCard">
@@ -34,14 +35,28 @@
       <p class="lede" id="sceneSub"></p>
       <div class="objects" id="objects"></div>
     </section>
-    <div class="chips" id="sourceChips"></div>
-    <p class="msg" id="settingsMsg"></p>
+    <details class="internals">
+      <summary>Behind the scenes</summary>
+      <p class="lede" id="polLine"></p>
+      <div class="bar" aria-hidden="true"><span id="polBar"></span></div>
+      <dl class="facts" id="facts"></dl>
+      <form class="fields" id="sourceForm">
+        <input id="sourceInput" name="source" autocomplete="off" spellcheck="false"
+          placeholder="RTSP URL, file path, or camera index (0)" />
+        <button class="btn" type="submit">Use camera</button>
+      </form>
+      <p class="msg" id="settingsMsg"></p>
+    </details>
   </main>
   <script>
     const seatNames = { edge: "Raspberry", node: "Node", hub: "Hub" };
     const questions = { edge: "Unusual?", node: "What is it?", hub: "What is it doing?" };
     let seat = "edge";
     let currentSource = "";
+
+    function esc(value) {
+      return String(value ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    }
 
     function setSeat(next) {
       if (next === "operator") { location.href = "/events"; return; }
@@ -87,9 +102,10 @@
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || "failed");
         currentSource = data.source || source;
-        markChips();
+        document.getElementById("sourceInput").value = currentSource;
         document.getElementById("stream").src = "/api/stream.mjpg?seat=" + seat + "&t=" + Date.now();
         msg.textContent = "";
+        msg.className = "msg";
         refresh();
       } catch (err) {
         msg.textContent = err.message || "failed";
@@ -97,10 +113,44 @@
       }
     }
 
-    function markChips() {
-      document.querySelectorAll("#sourceChips button").forEach((btn) => {
-        btn.classList.toggle("selected", btn.getAttribute("data-path") === currentSource);
-      });
+    function shortName(path) {
+      const s = String(path || "");
+      const parts = s.split(/[/\\]/);
+      return parts[parts.length - 1] || s || "—";
+    }
+
+    function fillInternals(data) {
+      const pol = data.pol || {};
+      const edge = (data.handoff || {}).edge || {};
+      const need = pol.learn_samples || 80;
+      const n = pol.samples || 0;
+      const pct = Math.round((pol.progress || 0) * 100);
+      const polPill = document.getElementById("polPill");
+      if (pol.confident) {
+        polPill.textContent = "PoL ready";
+        polPill.classList.remove("wait");
+      } else {
+        polPill.textContent = "Learning " + pct + "%";
+        polPill.classList.add("wait");
+      }
+      document.getElementById("polLine").textContent = pol.confident
+        ? "This camera’s Pattern of Life is confident (" + n + " ticks)."
+        : "Learning this camera’s usual look — " + n + " / " + need + " ticks. Edge uploads until then.";
+      document.getElementById("polBar").style.width = Math.min(100, pct) + "%";
+      const rows = [
+        ["Pattern of Life", (pol.confident ? "confident" : "learning") + " · " + n + " / " + need],
+        ["Unusual score", (edge.score != null ? Number(edge.score).toFixed(2) : "—") + (edge.reason ? " · " + edge.reason : "")],
+        ["Occupancy / look", "place " + Number(edge.occupancy_novelty || 0).toFixed(2) + " · visual " + Number(edge.visual_delta || 0).toFixed(2)],
+        ["Detector", shortName(data.model)],
+        ["Drone model", shortName(data.drone_model)],
+        ["Caption", data.vision || "off"],
+        ["Camera", data.source || currentSource || "—"],
+        ["Ingest", (data.fps || 0) + " fps · motion " + (data.motion_area || 0)],
+      ];
+      if (data.last_error) rows.push(["Error", data.last_error]);
+      document.getElementById("facts").innerHTML = rows.map(([k, v]) =>
+        `<dt>${k}</dt><dd>${esc(v)}</dd>`
+      ).join("");
     }
 
     async function refresh() {
@@ -114,26 +164,32 @@
         const node = handoff.node || {};
         const hub = handoff.hub || {};
         const pol = data.pol || {};
+        const need = pol.learn_samples || 80;
+        const n = pol.samples || 0;
         renderHandoff(handoff);
+        fillInternals(data);
         document.getElementById("sceneKicker").textContent = questions[seat];
         const scene = document.getElementById("scene");
         const sub = document.getElementById("sceneSub");
         const objs = document.getElementById("objects");
         const card = document.getElementById("sceneCard");
         card.classList.toggle("alert", Boolean(hub.page_operator && seat === "hub"));
+        const learnBit = pol.confident
+          ? ""
+          : " Learning " + n + "/" + need + ".";
         if (seat === "edge") {
           if (!data.last_motion) {
             scene.textContent = "Quiet";
-            sub.textContent = "Stays on the Pi.";
+            sub.textContent = "Stays on the Pi." + learnBit;
           } else if (edge.upload) {
             scene.textContent = "Unusual";
-            sub.textContent = edge.reason || "Upload to Node.";
+            sub.textContent = (edge.reason || "Upload to Node.") + learnBit;
           } else if (edge.prior_skip) {
             scene.textContent = "Usual, policy skip";
-            sub.textContent = "Would stay local; Node still got it (drone / bag).";
+            sub.textContent = "Would stay local; Node still got it (drone / bag)." + learnBit;
           } else {
             scene.textContent = "Usual";
-            sub.textContent = pol.confident ? "Stays on the Pi." : "Learning this camera.";
+            sub.textContent = "Stays on the Pi." + learnBit;
           }
           objs.innerHTML = "";
         } else if (seat === "node") {
@@ -166,15 +222,13 @@
     async function load() {
       const data = await (await fetch("/api/settings")).json();
       currentSource = data.source || "";
-      document.getElementById("sourceChips").innerHTML = (data.samples || []).map((s) =>
-        `<button type="button" data-path="${s.path}">${s.label}</button>`
-      ).join("");
-      document.querySelectorAll("#sourceChips button").forEach((btn) => {
-        btn.addEventListener("click", () => applySource(btn.getAttribute("data-path")));
-      });
-      markChips();
+      document.getElementById("sourceInput").value = currentSource;
     }
 
+    document.getElementById("sourceForm").addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      applySource(document.getElementById("sourceInput").value);
+    });
     document.querySelectorAll("#seats button").forEach((btn) => {
       btn.addEventListener("click", () => setSeat(btn.getAttribute("data-seat")));
     });

@@ -11,12 +11,6 @@ ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = ROOT / "config.yaml"
 SETTINGS_PATH = ROOT / "data" / "settings.json"
 
-SAMPLE_LABELS = {
-    "entrance.mp4": "Entrance",
-    "drone.mp4": "Drone",
-    "package.mp4": "Bag left",
-}
-
 BUILDING_CLASSES = [
     "person",
     "bicycle",
@@ -295,18 +289,10 @@ def parse_settings_update(source: str) -> str | int:
     return parsed
 
 
-def listed_samples() -> list[dict[str, str]]:
-    folder = ROOT / "data" / "samples"
-    items: list[dict[str, str]] = []
-    for name, label in SAMPLE_LABELS.items():
-        path = folder / name
-        if path.is_file() and path.stat().st_size > 10_000:
-            items.append({"path": f"data/samples/{name}", "label": label})
-    return items
-
-
 def public_settings(cfg: AppConfig) -> dict[str, Any]:
     return {
         "source": str(cfg.camera.source),
-        "samples": listed_samples(),
+        "model": cfg.detection.model,
+        "drone_model": cfg.detection.drone_model,
+        "vision": cfg.vision.provider if cfg.vision.enabled else "off",
     }

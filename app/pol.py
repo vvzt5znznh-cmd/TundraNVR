@@ -95,6 +95,8 @@ class PatternOfLife:
                 "source": self.source,
                 "key": self.key,
                 "samples": self.samples,
+                "learn_samples": LEARN_SAMPLES,
+                "progress": round(min(1.0, self.samples / max(LEARN_SAMPLES, 1)), 3),
                 "state": "confident" if self.samples >= LEARN_SAMPLES else "learning",
                 "confident": self.samples >= LEARN_SAMPLES,
                 "grid_n": int(self.grid_n),
