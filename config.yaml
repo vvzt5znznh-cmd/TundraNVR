@@ -1,4 +1,5 @@
 camera:
+  name: building
   source: 0
   width: 1280
   height: 720
@@ -36,6 +37,11 @@ detection:
     - drone
   device: cpu
 
+tracking:
+  max_age: 15
+  min_hits: 2
+  iou_match: 0.3
+
 events:
   pre_seconds: 2
   post_seconds: 4
@@ -49,11 +55,35 @@ server:
 
 vision:
   enabled: true
-  provider: auto
+  provider: local
+  allow_cloud: false
   ollama_url: http://127.0.0.1:11434
   ollama_model: moondream
   openai_model: gpt-4o-mini
   timeout_seconds: 25
+  policy: >
+    Fixed building camera. Alert on unattended bags and after-hours people
+    with no badge in the last minute. Ordinary doorway traffic is normal.
+
+fusion:
+  enabled: true
+  badge_window_seconds: 60
+  fixture: data/fusion/badges.jsonl
+
+mqtt:
+  enabled: false
+  host: 127.0.0.1
+  port: 1883
+  prefix: tundranvr
+
+embed:
+  enabled: true
+  knn: 5
+  gate_alerts: false
+
+zones:
+  - name: doorway
+    polygon: [[0.0, 0.35], [1.0, 0.35], [1.0, 1.0], [0.0, 1.0]]
 
 monitoring:
   expected_classes:
@@ -75,3 +105,5 @@ monitoring:
     - drone
     - airplane
   unattended_bags: true
+  bag_dwell_seconds: 8
+  bag_person_radius: 120

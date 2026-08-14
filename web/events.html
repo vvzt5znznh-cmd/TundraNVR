@@ -71,8 +71,13 @@
         player.src = event.clip_url;
         player.play().catch(() => {});
       }
-      detail.textContent = `${fmt(event.ts_start)} · ${(event.classes || []).join(", ") || "—"}`;
-      summary.textContent = (event.anomaly ? `Alert: ${event.anomaly_reason}. ` : "") + (event.summary || "");
+      detail.textContent = `${fmt(event.ts_start)} · track ${event.track_id ?? "—"} · dwell ${event.dwell_s ?? "—"}s · ${(event.classes || []).join(", ") || "—"}`;
+      summary.textContent = [
+        event.anomaly ? `Alert: ${event.anomaly_reason}.` : "Not an operator alert.",
+        event.summary || "",
+        event.verifier_provider ? `Verifier: ${event.verifier_provider} (${event.verifier_status || "—"})` : "",
+        event.novelty_score != null ? `Novelty ${Number(event.novelty_score).toFixed(2)} (ranking only).` : "",
+      ].filter(Boolean).join(" ");
       const steps = (event.handoff && event.handoff.steps) || [];
       detailHandoff.innerHTML = steps.map((s) =>
         `<li><span class="step ${esc(s.decision)}"><b>${esc(s.label)}</b> ${esc(s.decision)}</span></li>`
@@ -95,7 +100,7 @@
           ${e.thumb_url ? `<img class="thumb" src="${e.thumb_url}" alt="" />` : "<span></span>"}
           <div>
             <h3>${esc(headline(e))}</h3>
-            <p class="meta">${esc(fmt(e.ts_start))} · ${esc(stopLabel(e))}</p>
+            <p class="meta">${esc(fmt(e.ts_start))} · ${esc(stopLabel(e))}${e.track_id != null ? " · #" + e.track_id : ""}${e.dwell_s != null ? " · " + e.dwell_s + "s" : ""}</p>
           </div>
         </button>
       `).join("");

@@ -1,0 +1,7 @@
+{
+  "note": "Development fixture only. Never report headline PoC numbers from this file.",
+  "source": "synthetic",
+  "events": [
+    {"t_start": 0.4, "t_end": 1.6, "label": "motion", "alert": false}
+  ]
+}

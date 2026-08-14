@@ -28,7 +28,7 @@ def classify_anomaly(
     alert: list[str],
     unattended_bags: bool = True,
 ) -> AnomalyResult:
-    """Rule-based building-camera anomaly check. Not a learned detector."""
+    """Rule-based fail-open check. Unattended bags are a track rule in app.track, not this."""
     seen = {normalize_class(c) for c in classes if c}
     alert_set = {normalize_class(c) for c in alert}
     expected_set = {normalize_class(c) for c in expected} | alert_set

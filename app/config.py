@@ -69,6 +69,7 @@ class CameraConfig:
     width: int = 1280
     height: int = 720
     loop_file: bool = False
+    name: str = "building"
 
 
 @dataclass
@@ -100,6 +101,15 @@ class MonitoringConfig:
     expected_classes: list[str] = field(default_factory=lambda: list(EXPECTED_CLASSES))
     alert_classes: list[str] = field(default_factory=lambda: list(ALERT_CLASSES))
     unattended_bags: bool = True
+    bag_dwell_seconds: float = 8.0
+    bag_person_radius: float = 120.0
+
+
+@dataclass
+class TrackingConfig:
+    max_age: int = 15
+    min_hits: int = 2
+    iou_match: float = 0.3
 
 
 @dataclass
@@ -109,6 +119,7 @@ class EventsConfig:
     cooldown_seconds: float = 8.0
     retention_days: int = 7
     clip_fps: float = 10.0
+    write_media: bool = True
 
 
 @dataclass
@@ -120,11 +131,44 @@ class ServerConfig:
 @dataclass
 class VisionConfig:
     enabled: bool = True
-    provider: str = "auto"
+    provider: str = "local"
+    allow_cloud: bool = False
     ollama_url: str = "http://127.0.0.1:11434"
     ollama_model: str = "moondream"
     openai_model: str = "gpt-4o-mini"
     timeout_seconds: float = 25.0
+    policy: str = (
+        "Fixed building camera. Alert on unattended bags and after-hours people "
+        "with no badge in the last minute. Ordinary doorway traffic is normal."
+    )
+
+
+@dataclass
+class FusionConfig:
+    enabled: bool = True
+    badge_window_seconds: float = 60.0
+    fixture: str = "data/fusion/badges.jsonl"
+
+
+@dataclass
+class MqttSettings:
+    enabled: bool = False
+    host: str = "127.0.0.1"
+    port: int = 1883
+    prefix: str = "tundranvr"
+
+
+@dataclass
+class EmbedConfig:
+    enabled: bool = True
+    knn: int = 5
+    gate_alerts: bool = False
+
+
+@dataclass
+class ZoneConfig:
+    name: str
+    polygon: list[list[float]]
 
 
 @dataclass
@@ -137,6 +181,11 @@ class AppConfig:
     server: ServerConfig
     vision: VisionConfig
     monitoring: MonitoringConfig
+    tracking: TrackingConfig
+    fusion: FusionConfig
+    mqtt: MqttSettings
+    embed: EmbedConfig
+    zones: list[ZoneConfig] = field(default_factory=list)
     root: Path = ROOT
 
     @property
@@ -170,10 +219,27 @@ class AppConfig:
         path = Path(source)
         if path.is_absolute():
             return str(path)
-        # Treat URLs as-is; relative paths are relative to project root.
         if "://" in source:
             return source
         return str(self.root / path)
+
+
+def _zones(raw: list) -> list[ZoneConfig]:
+    out: list[ZoneConfig] = []
+    for item in raw or []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        poly = item.get("polygon") or []
+        if not name or not isinstance(poly, list):
+            continue
+        pts = []
+        for p in poly:
+            if isinstance(p, (list, tuple)) and len(p) >= 2:
+                pts.append([float(p[0]), float(p[1])])
+        if len(pts) >= 3:
+            out.append(ZoneConfig(name=name, polygon=pts))
+    return out
 
 
 def load_config(path: Path | None = None) -> AppConfig:
@@ -191,6 +257,14 @@ def load_config(path: Path | None = None) -> AppConfig:
     server_raw = raw.get("server") or {}
     vision_raw = raw.get("vision") or {}
     monitoring_raw = raw.get("monitoring") or {}
+    tracking_raw = raw.get("tracking") or {}
+    fusion_raw = raw.get("fusion") or {}
+    mqtt_raw = raw.get("mqtt") or {}
+    embed_raw = raw.get("embed") or {}
+
+    provider = str(vision_raw.get("provider", "local")).strip().lower()
+    if provider in {"auto", "none", "false"}:
+        provider = "local"
 
     cfg = AppConfig(
         camera=CameraConfig(
@@ -198,6 +272,7 @@ def load_config(path: Path | None = None) -> AppConfig:
             width=int(camera_raw.get("width", 1280)),
             height=int(camera_raw.get("height", 720)),
             loop_file=bool(camera_raw.get("loop_file", False)),
+            name=str(camera_raw.get("name") or "building"),
         ),
         pipeline=PipelineConfig(
             detect_fps=float(pipeline_raw.get("detect_fps", 5)),
@@ -223,6 +298,7 @@ def load_config(path: Path | None = None) -> AppConfig:
             cooldown_seconds=float(events_raw.get("cooldown_seconds", 8)),
             retention_days=int(events_raw.get("retention_days", 7)),
             clip_fps=float(events_raw.get("clip_fps", 10)),
+            write_media=bool(events_raw.get("write_media", True)),
         ),
         server=ServerConfig(
             host=str(server_raw.get("host", "0.0.0.0")),
@@ -230,17 +306,43 @@ def load_config(path: Path | None = None) -> AppConfig:
         ),
         vision=VisionConfig(
             enabled=bool(vision_raw.get("enabled", True)),
-            provider=str(vision_raw.get("provider", "auto")),
+            provider=provider,
+            allow_cloud=bool(vision_raw.get("allow_cloud", False)),
             ollama_url=str(vision_raw.get("ollama_url", "http://127.0.0.1:11434")),
             ollama_model=str(vision_raw.get("ollama_model", "moondream")),
             openai_model=str(vision_raw.get("openai_model", "gpt-4o-mini")),
             timeout_seconds=float(vision_raw.get("timeout_seconds", 25)),
+            policy=str(vision_raw.get("policy") or VisionConfig.policy),
         ),
         monitoring=MonitoringConfig(
             expected_classes=list(monitoring_raw.get("expected_classes") or EXPECTED_CLASSES),
             alert_classes=list(monitoring_raw.get("alert_classes") or ALERT_CLASSES),
             unattended_bags=bool(monitoring_raw.get("unattended_bags", True)),
+            bag_dwell_seconds=float(monitoring_raw.get("bag_dwell_seconds", 8)),
+            bag_person_radius=float(monitoring_raw.get("bag_person_radius", 120)),
         ),
+        tracking=TrackingConfig(
+            max_age=int(tracking_raw.get("max_age", 15)),
+            min_hits=int(tracking_raw.get("min_hits", 2)),
+            iou_match=float(tracking_raw.get("iou_match", 0.3)),
+        ),
+        fusion=FusionConfig(
+            enabled=bool(fusion_raw.get("enabled", True)),
+            badge_window_seconds=float(fusion_raw.get("badge_window_seconds", 60)),
+            fixture=str(fusion_raw.get("fixture") or "data/fusion/badges.jsonl"),
+        ),
+        mqtt=MqttSettings(
+            enabled=bool(mqtt_raw.get("enabled", False)),
+            host=str(mqtt_raw.get("host", "127.0.0.1")),
+            port=int(mqtt_raw.get("port", 1883)),
+            prefix=str(mqtt_raw.get("prefix") or "tundranvr"),
+        ),
+        embed=EmbedConfig(
+            enabled=bool(embed_raw.get("enabled", True)),
+            knn=int(embed_raw.get("knn", 5)),
+            gate_alerts=bool(embed_raw.get("gate_alerts", False)),
+        ),
+        zones=_zones(raw.get("zones") or []),
         root=ROOT,
     )
     overlay = _load_overlay()
@@ -254,6 +356,8 @@ def load_config(path: Path | None = None) -> AppConfig:
     cfg.clips_dir.mkdir(parents=True, exist_ok=True)
     cfg.thumbs_dir.mkdir(parents=True, exist_ok=True)
     cfg.pol_dir.mkdir(parents=True, exist_ok=True)
+    (cfg.data_dir / "fusion").mkdir(parents=True, exist_ok=True)
+    (cfg.data_dir / "eval").mkdir(parents=True, exist_ok=True)
     return cfg
 
 
@@ -290,8 +394,11 @@ def parse_settings_update(source: str) -> str | int:
 
 
 def public_settings(cfg: AppConfig) -> dict[str, Any]:
+    from app.vision import effective_provider
+
     return {
         "source": str(cfg.camera.source),
         "model": cfg.detection.model,
-        "vision": cfg.vision.provider if cfg.vision.enabled else "off",
+        "vision": effective_provider(cfg.vision) if cfg.vision.enabled else "off",
+        "allow_cloud": bool(cfg.vision.allow_cloud),
     }

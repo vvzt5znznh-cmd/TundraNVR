@@ -12,13 +12,6 @@ from app.config import VisionConfig
 
 log = logging.getLogger(__name__)
 
-PROMPT = (
-    "You are looking at a still from a fixed building CCTV camera. "
-    "Detected objects: {objects}. Anomaly flag: {anomaly}. "
-    "In 2-3 short sentences say what is in the frame and what it is doing. "
-    "Do not mention models or that this is a test."
-)
-
 
 def fallback_summary(
     classes: list[str],
@@ -37,13 +30,45 @@ def fallback_summary(
         return f"Detected {labels} (score {score:.2f}). A drone near a building is worth an alert."
     if {"person"} & set(classes):
         kind = "ordinary foot traffic around the building"
-    elif {"car", "truck", "bus", "bicycle", "motorcycle"} & set(classes):
-        kind = "ordinary vehicle activity at the building"
-    elif {"dog", "cat", "bird"} & set(classes):
-        kind = "an animal near the building"
     else:
         kind = "activity in the scene"
     return f"Detected {labels} (score {score:.2f}). This looks like {kind}."
+
+
+def effective_provider(cfg: VisionConfig) -> str:
+    if not cfg.enabled:
+        return "off"
+    provider = (cfg.provider or "local").strip().lower()
+    if provider in {"auto", "none", "false"}:
+        provider = "local"
+    if provider in {"openai", "cloud"} and not cfg.allow_cloud:
+        return "denied-cloud"
+    return provider
+
+
+def complete_vision(cfg: VisionConfig, jpeg: bytes, prompt: str) -> tuple[str | None, str, str]:
+    """Return (text, provider, status). Never silently sends frames to the cloud."""
+    provider = effective_provider(cfg)
+    if provider in {"off", "none", "false"}:
+        return None, "off", "off"
+    if provider == "denied-cloud":
+        log.warning("Cloud vision blocked: vision.allow_cloud is false")
+        return None, "denied-cloud", "unavailable"
+    if not jpeg:
+        return None, provider, "unavailable"
+    if provider in {"local", "ollama"}:
+        text = _ollama(cfg, jpeg, prompt)
+        if text:
+            return text, "ollama", "ok"
+        return None, "ollama", "unavailable"
+    if provider in {"openai", "cloud"}:
+        if not cfg.allow_cloud:
+            return None, "denied-cloud", "unavailable"
+        text = _openai(cfg, jpeg, prompt)
+        if text:
+            return text, "openai", "ok"
+        return None, "openai", "unavailable"
+    return None, provider, "unavailable"
 
 
 def describe_event(
@@ -53,29 +78,22 @@ def describe_event(
     score: float,
     anomaly_reason: str = "",
 ) -> tuple[str, str]:
-    """Return (summary, provider_used). Never raises."""
-    objects = ", ".join(classes) if classes else "none"
-    anomaly = anomaly_reason or "none"
-    prompt = PROMPT.format(objects=objects, anomaly=anomaly)
-    provider = (cfg.provider or "auto").lower()
-    if provider in {"off", "none", "false"}:
-        return fallback_summary(classes, score, anomaly_reason), "off"
-    if not cfg.enabled:
-        return fallback_summary(classes, score, anomaly_reason), "off"
+    """Search-facing caption only. Never the alert decision."""
+    fallback = fallback_summary(classes, score, anomaly_reason)
     if not thumb.is_file():
-        return fallback_summary(classes, score, anomaly_reason), "fallback"
+        return fallback, "fallback"
     jpeg = thumb.read_bytes()
-    if provider in {"auto", "ollama"}:
-        text = _ollama(cfg, jpeg, prompt)
-        if text:
-            return text, "ollama"
-        if provider == "ollama":
-            return fallback_summary(classes, score, anomaly_reason), "fallback"
-    if provider in {"auto", "openai"}:
-        text = _openai(cfg, jpeg, prompt)
-        if text:
-            return text, "openai"
-    return fallback_summary(classes, score, anomaly_reason), "fallback"
+    prompt = (
+        "You are looking at a still from a fixed building CCTV camera. "
+        f"Detected objects: {', '.join(classes) or 'none'}. "
+        f"Anomaly flag: {anomaly_reason or 'none'}. "
+        "In 2-3 short sentences say what is in the frame and what it is doing. "
+        "Do not mention models."
+    )
+    text, provider, status = complete_vision(cfg, jpeg, prompt)
+    if text and status == "ok":
+        return text, provider
+    return fallback, status if status != "ok" else "fallback"
 
 
 def _ollama(cfg: VisionConfig, jpeg: bytes, prompt: str) -> str | None:
@@ -102,7 +120,7 @@ def _openai(cfg: VisionConfig, jpeg: bytes, prompt: str) -> str | None:
     b64 = base64.b64encode(jpeg).decode("ascii")
     payload = {
         "model": cfg.openai_model,
-        "max_tokens": 220,
+        "max_tokens": 400,
         "messages": [
             {
                 "role": "user",

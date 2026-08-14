@@ -27,6 +27,7 @@
         <span class="pill wait" id="status">Connecting</span>
         <span class="pill" id="seatPill">Raspberry</span>
         <span class="pill" id="polPill">Learning…</span>
+        <span class="pill" id="visionPill">Verifier</span>
       </div>
     </section>
     <section class="scene-card" id="sceneCard">
@@ -50,7 +51,7 @@
   </main>
   <script>
     const seatNames = { edge: "Raspberry", node: "Node", hub: "Hub" };
-    const questions = { edge: "Unusual?", node: "What is it?", hub: "What is it doing?" };
+    const questions = { edge: "Unusual?", node: "What is it, and how long?", hub: "Alert or suppress?" };
     let seat = "edge";
     let currentSource = "";
 
@@ -144,16 +145,19 @@
         ? namerName + " (ran this trip)"
         : namerName + " (only on trips · idle)";
       const captionOn = data.vision && data.vision !== "off";
-      const caption = captionOn
-        ? (data.vision + (hub.ran ? " (this event)" : " · only on Hub"))
+      const verifier = captionOn
+        ? ((data.vision || "local") + (data.allow_cloud ? " · cloud allowed" : " · local only") + (hub.ran ? " (this trip)" : " · Hub verdict"))
         : "off";
+      document.getElementById("visionPill").textContent = (data.vision || "local") + (data.allow_cloud ? "" : " · local");
+      const tracks = (data.tracks || []).map((t) => "#" + t.id + " " + t.cls + " " + t.dwell_s + "s").join(", ") || "—";
       const rows = [
         ["Pattern of Life", (pol.confident ? "confident" : "learning") + " · " + n + " / " + need + " motion ticks"],
         ["Unusual score", (edge.score != null ? Number(edge.score).toFixed(2) : "—") + (edge.reason ? " · " + edge.reason : "")],
         ["Occupancy / look", "place " + Number(edge.occupancy_novelty || 0).toFixed(2) + " · visual " + Number(edge.visual_delta || 0).toFixed(2)],
         ["Motion", "frame difference (OpenCV, no neural net)"],
         ["Namer", namer],
-        ["Caption", caption],
+        ["Tracks", tracks],
+        ["Verifier", verifier],
         ["Camera", data.source || currentSource || "—"],
         ["Ingest", (data.fps || 0) + " fps · motion " + (data.motion_area || 0)],
       ];
@@ -205,13 +209,13 @@
             scene.textContent = "Nothing from Edge";
             sub.textContent = "Usual frames never arrive. Namer is idle.";
           } else if (node.closed) {
-            scene.textContent = dets.map((d) => d.cls).join(", ") || "Named";
+            scene.textContent = (node.tracks && node.tracks.length) ? node.tracks.join(", ") : (dets.map((d) => d.cls).join(", ") || "Named");
             sub.textContent = "Closed. Hub is not asked.";
           } else {
-            scene.textContent = dets.map((d) => d.cls).join(", ") || "Unsure";
-            sub.textContent = "Send to Hub.";
+            scene.textContent = (node.tracks && node.tracks.length) ? node.tracks.join(", ") : (dets.map((d) => d.cls).join(", ") || "Unsure");
+            sub.textContent = "Send to Hub to adjudicate.";
           }
-          objs.innerHTML = dets.map((d) => `<span>${d.cls}</span>`).join("");
+          objs.innerHTML = dets.map((d) => `<span>${d.track_id != null ? "#" + d.track_id + " " : ""}${d.cls}${d.dwell_s != null ? " " + d.dwell_s + "s" : ""}</span>`).join("");
         } else if (!hub.ran) {
           scene.textContent = "Idle";
           sub.textContent = "Node did not escalate.";

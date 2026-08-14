@@ -182,6 +182,12 @@ def _event_json(row: dict) -> dict:
         "stopped_at": row.get("stopped_at") or "",
         "handoff": row.get("handoff") or {},
         "operator_status": row.get("operator_status") or "",
+        "track_id": row.get("track_id"),
+        "dwell_s": (row.get("features") or {}).get("dwell_s"),
+        "verifier_provider": row.get("verifier_provider") or "",
+        "verifier_status": row.get("verifier_status") or "",
+        "novelty_score": row.get("novelty_score"),
+        "features": row.get("features") or {},
     }
 
 

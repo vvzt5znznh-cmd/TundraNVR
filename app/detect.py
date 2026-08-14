@@ -19,6 +19,7 @@ class Detection:
     cls: str
     conf: float
     xyxy: tuple[int, int, int, int]
+    track_id: int | None = None
 
 
 def _resolve_model(name: str) -> str:
@@ -130,6 +131,8 @@ def draw_overlay(
         color = (0, 60, 255) if det.cls in ALERT_OVERLAY else (0, 200, 255)
         cv2.rectangle(vis, (x1, y1), (x2, y2), color, 2)
         label = f"{det.cls} {det.conf:.2f}"
+        if det.track_id is not None:
+            label = f"#{det.track_id} {label}"
         (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)
         cv2.rectangle(vis, (x1, max(0, y1 - th - 8)), (x1 + tw + 6, y1), color, -1)
         cv2.putText(

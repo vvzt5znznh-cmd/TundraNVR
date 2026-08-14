@@ -111,6 +111,14 @@ class ClipWriter:
             self._cv = None
 
 
+class NullWriter:
+    def write(self, frame: np.ndarray) -> None:
+        return None
+
+    def close(self) -> None:
+        return None
+
+
 def save_thumb(frame: np.ndarray, path: Path, quality: int = 80) -> None:
     ok, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
     if not ok:
@@ -134,6 +142,7 @@ def cleanup_old_events(store: EventStore, data_dir: Path, retention_days: int) -
                     path.unlink()
             except OSError as exc:
                 log.warning("Could not delete %s: %s", path, exc)
+        store.delete_embedding(int(event["id"]))
         store.delete(int(event["id"]))
         removed += 1
     if removed:

@@ -20,6 +20,8 @@ data/thumbs/*
 data/settings.json
 data/pol/*.json
 !data/pol/.gitkeep
+data/eval/ablation.csv
+data/eval/ablation.md
 
 # OS / editor
 .DS_Store
