@@ -282,7 +282,7 @@
           return `<li><span class="step ${esc(s.decision)}"><b>${esc(s.label)}</b> ${esc(s.decision)}</span></li>`;
         }
         return `<li><button type="button" class="step ${esc(s.decision)} ${stop ? "stop" : ""}" data-stage="${esc(s.stage)}">
-          <b>${esc(s.label)}</b><span>${esc(s.decision)}</span><em>${esc(s.detail || "")}</em>
+          <b>${esc(s.label)}</b><span>${esc(s.decision)}</span><em title="${esc(s.detail || "")}">${esc(s.detail || "")}</em>
         </button></li>`;
       })
       .join("");
