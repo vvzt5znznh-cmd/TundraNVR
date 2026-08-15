@@ -24,6 +24,7 @@ from app.page import choose_paged_because
 from app.pol import PatternOfLife, absorb_into_file, source_key
 from app.record import ClipWriter, NullWriter, cleanup_old_events, save_thumb
 from app.security import redact_source
+from app.situation import situation_lines
 from app.tiers import SEAT_LABELS, models_payload
 from app.track import ByteTracker, Track, unattended_bags
 from app.verify import verify_event
@@ -58,7 +59,7 @@ def _placeholder_jpeg(width: int, height: int, quality: int) -> bytes:
 
 
 def bundled_sample(root: Path) -> Path | None:
-    names = ("indoor.mp4", "package.mp4", "drone.mp4", "sample.mp4", "entrance.mp4")
+    names = ("street.mp4", "indoor.mp4", "package.mp4", "drone.mp4", "sample.mp4", "entrance.mp4")
     dirs = (root / "data" / "samples", root / "data")
     for folder in dirs:
         for name in names:
@@ -66,6 +67,28 @@ def bundled_sample(root: Path) -> Path | None:
             if path.is_file() and path.stat().st_size > 10_000:
                 return path
     return None
+
+
+DEMO_CLIPS = (
+    ("street", "Street", "street.mp4"),
+    ("indoor", "Indoor", "indoor.mp4"),
+    ("package", "Left bag", "package.mp4"),
+)
+
+
+def demo_clips(root: Path) -> list[dict]:
+    out: list[dict] = []
+    for cid, label, name in DEMO_CLIPS:
+        path = root / "data" / "samples" / name
+        out.append(
+            {
+                "id": cid,
+                "label": label,
+                "path": f"data/samples/{name}",
+                "present": path.is_file() and path.stat().st_size > 10_000,
+            }
+        )
+    return out
 
 
 @dataclass
@@ -212,6 +235,7 @@ class Pipeline:
         self._hub_banner = ""
         self._yolo_ran = False
         self._live_tracks: list[Track] = []
+        self._situation: list[str] = []
         self._seen_track_ids: set[int] = set()
         self.escalation_counts = {
             "raspberry_trips": 0,
@@ -300,6 +324,8 @@ class Pipeline:
                 "allow_cloud": bool(self.cfg.vision.allow_cloud),
                 "yolo_ran": self.status.yolo_ran,
                 "tracks": tracks,
+                "situation": list(self._situation),
+                "demo_clips": demo_clips(self.cfg.root),
                 "last_error": self.status.last_error,
                 "reconnects": self.status.reconnects,
                 "uptime_s": round(uptime, 1),
@@ -668,6 +694,13 @@ class Pipeline:
             else []
         )
         bag_ids = {t.track_id for t in bags}
+        if run_detect:
+            self._situation = situation_lines(
+                tracks,
+                now=now,
+                bags=bags,
+                bag_radius=float(self.cfg.monitoring.bag_person_radius),
+            )
         node_received = run_detect
         named = bool(tracks) or bool(detections)
         no_badge = bool(fusion and not fusion.badge_within_window)
@@ -1186,6 +1219,7 @@ class Pipeline:
             "fusion": active.fusion,
             "pol": {"state": pol_snap.get("state"), "progress": pol_snap.get("progress")},
             "clock": clock,
+            "situation": list(self._situation),
         }
         try:
             verdict = verify_event(

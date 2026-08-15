@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Download the indoor pedestrian demo clip and optional drone weights."""
+"""Download YOLO-readable demo clips and optional drone weights."""
 
 from __future__ import annotations
 
@@ -11,12 +11,22 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SAMPLES = ROOT / "data" / "samples"
 DRONE_WEIGHTS = ROOT / "drone-yolo.pt"
-USER_AGENT = "TundraNVR/0.13"
-
-INDOOR_URL = (
-    "https://github.com/intel-iot-devkit/sample-videos/raw/master/people-detection.mp4"
-)
+USER_AGENT = "TundraNVR/0.14"
+INTEL = "https://github.com/intel-iot-devkit/sample-videos/raw/master"
 DRONE_URL = "https://huggingface.co/TomSmail/drone-yolo-v1/resolve/main/best.pt"
+
+CLIPS = (
+    (
+        "street.mp4",
+        f"{INTEL}/person-bicycle-car-detection.mp4",
+        "Street — people, bicycles, cars",
+    ),
+    (
+        "indoor.mp4",
+        f"{INTEL}/people-detection.mp4",
+        "Indoor pedestrians",
+    ),
+)
 
 
 def _get(url: str, dest: Path, min_bytes: int) -> int:
@@ -46,9 +56,11 @@ def _get(url: str, dest: Path, min_bytes: int) -> int:
 
 
 def main() -> int:
-    samples = _get(INDOOR_URL, SAMPLES / "indoor.mp4", 10_000)
-    weights = _get(DRONE_URL, DRONE_WEIGHTS, 10_000)
-    return 1 if samples or weights else 0
+    failed = 0
+    for name, url, _label in CLIPS:
+        failed += _get(url, SAMPLES / name, 10_000)
+    failed += _get(DRONE_URL, DRONE_WEIGHTS, 10_000)
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

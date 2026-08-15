@@ -100,7 +100,7 @@
     clip: "Clip",
     sampleWhy:
       "This host is looping a short demo file. The 16-cell motion sketch fills in seconds; that is not a Pattern of Life. Review is not paged.",
-    sourcePh: "RTSP, camera index (0), or data/samples/indoor.mp4",
+    sourcePh: "RTSP, camera index (0), or data/samples/street.mp4",
   };
 
   function esc(value) {
@@ -278,6 +278,13 @@
     return extra ? html + `<span class="more">+${extra}</span>` : html;
   }
 
+  function renderSituation(el, lines, seat) {
+    if (!el) return;
+    const show = seat !== "edge" && Array.isArray(lines) && lines.length;
+    el.hidden = !show;
+    el.innerHTML = show ? lines.map((line) => `<li>${esc(line)}</li>`).join("") : "";
+  }
+
   function setLine(el, text) {
     if (!el) return;
     const value = text || "";
@@ -393,6 +400,7 @@
         ["Why", edge.why || edge.reason || "—"],
         ["Place / look / amount", Number(edge.occupancy_novelty || 0).toFixed(2) + " · " + Number(edge.visual_delta || 0).toFixed(2) + " · " + Number(edge.motion_spike || 0).toFixed(2)],
         ["Tracks", tracks],
+        ["Situation", (data.situation || []).join(" · ") || "—"],
         [
           "Escalation",
           (escalate.mode || "auto") +
@@ -544,6 +552,18 @@
           setLine(whyEl, "");
           objs.innerHTML = objectChips(node.classes || data.last_detections || [], 6);
         }
+        renderSituation(document.getElementById("situation"), data.situation, seat);
+        const presets = document.getElementById("demoPresets");
+        if (presets && Array.isArray(data.demo_clips)) {
+          const present = {};
+          data.demo_clips.forEach((clip) => {
+            present[clip.path] = Boolean(clip.present);
+          });
+          presets.querySelectorAll("button[data-clip]").forEach((btn) => {
+            const path = btn.getAttribute("data-clip");
+            btn.disabled = present[path] === false;
+          });
+        }
       } catch (err) {
         document.getElementById("status").textContent = COPY.error;
         document.getElementById("status").className = "pill err";
@@ -555,6 +575,12 @@
     document.getElementById("sourceForm").addEventListener("submit", (ev) => {
       ev.preventDefault();
       applySource(document.getElementById("sourceInput").value);
+    });
+    document.querySelectorAll("#demoPresets [data-clip]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        if (btn.disabled) return;
+        applySource(btn.getAttribute("data-clip"));
+      });
     });
     refresh();
     setInterval(refresh, 1500);

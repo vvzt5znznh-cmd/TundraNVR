@@ -37,6 +37,7 @@
           <div class="meters" id="whyMeters"></div>
         </div>
         <div class="objects" id="objects"></div>
+        <ul class="situation" id="situation" hidden></ul>
         <p class="models" id="modelLine"></p>
       </aside>
     </div>
@@ -53,9 +54,14 @@
       <dl class="facts" id="facts"></dl>
       <form class="fields" id="sourceForm">
         <input id="sourceInput" name="source" autocomplete="off" spellcheck="false"
-          placeholder="RTSP, camera index (0), or data/samples/indoor.mp4" />
+          placeholder="RTSP, camera index (0), or data/samples/street.mp4" />
         <button class="btn" type="submit">Set source</button>
       </form>
+      <div class="presets" id="demoPresets">
+        <button type="button" class="ghost" data-clip="data/samples/street.mp4">Street</button>
+        <button type="button" class="ghost" data-clip="data/samples/indoor.mp4">Indoor</button>
+        <button type="button" class="ghost" data-clip="data/samples/package.mp4">Left bag</button>
+      </div>
       <p class="msg" id="settingsMsg"></p>
     </details>
   </main>

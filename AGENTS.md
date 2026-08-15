@@ -15,8 +15,9 @@ Single Python service. There are no tests or linters configured in this repo bes
 - `torch` and `torchvision` MUST both be the CPU builds from `https://download.pytorch.org/whl/cpu` and must match. Installing `requirements.txt` on its own pulls a generic `torchvision` wheel from PyPI that is ABI-incompatible with the CPU `torch`, producing `RuntimeError: operator torchvision::nms does not exist` at first detection. The update script fixes this by force-reinstalling the `+cpu` `torchvision` wheel last. If you ever see that NMS error, run `pip install --force-reinstall --no-deps torchvision --index-url https://download.pytorch.org/whl/cpu`.
 
 ### Sample video + model
-- Default `camera.source` is index `0` (or an RTSP URL set in Details). With no camera, the process loops `data/samples/indoor.mp4` (Intel pedestrians). Fetch with `python scripts/download_sample.py`.
-- `package.mp4` is the unattended-bag demo (set in Details). Do not default to `entrance.mp4` (CAVIAR mall — YOLO false persons).
+- Default `camera.source` is index `0` (or an RTSP URL set in Details). With no camera, the process loops `data/samples/street.mp4` (Intel people/bicycles/cars), then indoor, then package. Fetch with `python scripts/download_sample.py`. Details presets: Street / Indoor / Left bag.
+- Situation lines on Detect/Verify come from track templates (dwell, zone, nearby vehicle, unattended bag). Not an LLM narrator. Track ids are not identity — do not add ReID, face, or LPR.
+- Do not default to `entrance.mp4` (CAVIAR mall — YOLO false persons) or treat `drone.mp4` as a building camera.
 - A looping file is a **motion sketch**, not a site Pattern of Life. Sample fallback does not page Review.
 - YOLO downloads `yolov8n.pt` on the first **Edge trip**. Needs internet. AGPL — see LICENSING.md.
 
