@@ -176,15 +176,10 @@
 
   function renderHeat(el, grid, usual) {
     if (!el) return;
+    const rows = 8;
+    const cols = 8;
     const g = grid || [];
-    if (!g.length) {
-      el.hidden = true;
-      el.innerHTML = "";
-      return;
-    }
     const u = usual || [];
-    const rows = g.length;
-    const cols = (g[0] || []).length;
     el.hidden = false;
     el.style.gridTemplateColumns = "repeat(" + cols + ", 1fr)";
     let html = "";
@@ -243,11 +238,14 @@
     setBar("polBarDetails", pct);
     const hud = document.getElementById("learnHud");
     if (hud) {
+      hud.hidden = ready;
       hud.classList.toggle("ready", ready);
-      document.getElementById("learnLabel").textContent = ready
-        ? COPY.baselineReady
-        : "Learning this camera’s usual";
-      document.getElementById("learnPct").textContent = pct + "% · " + n + "/" + need;
+      const label = document.getElementById("learnLabel");
+      const pctEl = document.getElementById("learnPct");
+      if (label) {
+        label.textContent = ready ? COPY.baselineReady : "Learning this camera’s usual";
+      }
+      if (pctEl) pctEl.textContent = pct + "% · " + n + "/" + need;
     }
     const kicker = document.getElementById("learnKicker");
     if (kicker) kicker.textContent = ready ? "This camera’s usual" : "Learning this camera";
@@ -255,8 +253,11 @@
     renderMeters(document.getElementById("whyMeters"), edge);
   }
 
-  function objectChips(items) {
-    return (items || [])
+  function objectChips(items, limit) {
+    const list = items || [];
+    const extra = limit && list.length > limit ? list.length - limit : 0;
+    const shown = extra ? list.slice(0, limit) : list;
+    const html = shown
       .map((d) => {
         const id = d.track_id != null ? "#" + d.track_id + " " : "";
         const dwell = d.dwell_s != null ? " " + d.dwell_s + "s" : "";
@@ -265,6 +266,14 @@
         return `<span>${esc(id + (d.cls || "object") + conf + dwell + zone)}</span>`;
       })
       .join("");
+    return extra ? html + `<span class="more">+${extra}</span>` : html;
+  }
+
+  function setLine(el, text) {
+    if (!el) return;
+    const value = text || "";
+    el.textContent = value;
+    el.title = value;
   }
 
   function renderCascade(el, handoff, onSeat) {
@@ -425,7 +434,7 @@
         if (dot) {
           dot.className = "dot " + (opened ? "live" : "wait");
         }
-        if (signal) signal.textContent = opened ? (data.fallback ? COPY.fallbackNote : COPY.live) : COPY.waiting;
+        if (signal) signal.textContent = opened ? (data.fallback ? COPY.sampleLoop : COPY.live) : COPY.waiting;
         const vis = document.getElementById("visionText");
         if (vis) {
           const name = data.vision || "local";
@@ -451,65 +460,73 @@
         const seatKey = seat === "raspberry" ? "edge" : seat;
         const line = document.getElementById("modelLine");
         line.textContent = modelLine(models[seatKey]);
+        line.title = line.textContent;
         line.className = "models" + (models[seatKey] && !models[seatKey].match ? " gap" : "");
         card.classList.toggle("alert", Boolean(hub.page_operator && seat === "hub"));
         const learnBit = pol.confident ? "" : COPY.learnBit(n, need);
         const whyText = [edge.why || "", data.fallback ? COPY.sampleWhy : ""].filter(Boolean).join(" ");
         if (seat === "edge") {
           if (!data.last_motion) {
-            scene.textContent = COPY.quiet;
-            sub.textContent = COPY.quietSub + learnBit;
-            whyEl.textContent = "";
+            setLine(scene, COPY.quiet);
+            setLine(sub, COPY.quietSub + learnBit);
+            setLine(whyEl, "");
           } else if (edge.unusual) {
-            scene.textContent = COPY.unusual;
-            sub.textContent = (edge.reason || COPY.unusualSub) + learnBit;
-            whyEl.textContent = whyText;
+            setLine(scene, COPY.unusual);
+            setLine(sub, (edge.reason || COPY.unusualSub) + learnBit);
+            setLine(whyEl, whyText);
           } else if (!pol.confident) {
-            scene.textContent = COPY.learning;
-            sub.textContent = COPY.polLearn(n, need);
-            whyEl.textContent = whyText;
+            setLine(scene, COPY.learning);
+            setLine(sub, COPY.polLearn(n, need));
+            setLine(whyEl, whyText);
           } else if (data.fallback && edge.upload) {
-            scene.textContent = COPY.sentDetect;
-            sub.textContent = COPY.sampleWhy;
-            whyEl.textContent = "";
+            setLine(scene, COPY.sentDetect);
+            setLine(sub, COPY.sampleWhy);
+            setLine(whyEl, "");
           } else {
-            scene.textContent = COPY.usual;
-            sub.textContent = COPY.usualSub + learnBit;
-            whyEl.textContent = edge.why || "";
+            setLine(scene, COPY.usual);
+            setLine(sub, COPY.usualSub + learnBit);
+            setLine(whyEl, edge.why || "");
           }
           objs.innerHTML = "";
         } else if (seat === "node") {
           const dets = node.received ? node.classes || [] : [];
           if (!node.received) {
-            scene.textContent = COPY.nothingFrom;
-            sub.textContent = COPY.nothingSub;
+            setLine(scene, COPY.nothingFrom);
+            setLine(sub, COPY.nothingSub);
           } else if (node.closed) {
-            scene.textContent =
+            setLine(
+              scene,
               node.tracks && node.tracks.length
                 ? node.tracks.join(", ")
-                : dets.map((d) => d.cls).join(", ") || COPY.named;
-            sub.textContent = COPY.closedSub;
+                : dets.map((d) => d.cls).join(", ") || COPY.named
+            );
+            setLine(sub, COPY.closedSub);
           } else {
-            scene.textContent =
+            setLine(
+              scene,
               node.tracks && node.tracks.length
                 ? node.tracks.join(", ")
-                : dets.map((d) => d.cls).join(", ") || COPY.unsure;
-            sub.textContent = (handoff.mode_effective || (data.escalation || {}).mode_effective) === "recall"
-              ? COPY.namerSub
-              : COPY.sendHub;
+                : dets.map((d) => d.cls).join(", ") || COPY.unsure
+            );
+            setLine(
+              sub,
+              (handoff.mode_effective || (data.escalation || {}).mode_effective) === "recall"
+                ? COPY.namerSub
+                : COPY.sendHub
+            );
           }
-          whyEl.textContent = "";
-          objs.innerHTML = objectChips(dets);
+          setLine(whyEl, "");
+          objs.innerHTML = objectChips(dets, 6);
         } else if (!hub.ran) {
-          scene.textContent = COPY.hubIdle;
-          sub.textContent = COPY.hubIdleSub;
-          whyEl.textContent = "";
+          setLine(scene, COPY.hubIdle);
+          setLine(sub, COPY.hubIdleSub);
+          setLine(whyEl, "");
           objs.innerHTML = "";
         } else {
-          scene.textContent = data.last_scene || hub.detail || COPY.describing;
-          sub.textContent = hub.page_operator ? COPY.hubNeed : COPY.hubLog;
-          whyEl.textContent = "";
-          objs.innerHTML = objectChips(node.classes || data.last_detections || []);
+          setLine(scene, data.last_scene || hub.detail || COPY.describing);
+          setLine(sub, hub.page_operator ? COPY.hubNeed : COPY.hubLog);
+          setLine(whyEl, "");
+          objs.innerHTML = objectChips(node.classes || data.last_detections || [], 6);
         }
       } catch (err) {
         document.getElementById("status").textContent = COPY.error;
@@ -655,7 +672,7 @@
           }));
       const pagedEl = document.getElementById("pagedBecause");
       if (pagedEl) pagedEl.textContent = pagedLabel(event);
-      document.getElementById("eventObjects").innerHTML = objectChips(chips) + extraChips(event);
+      document.getElementById("eventObjects").innerHTML = objectChips(chips, 8) + extraChips(event);
       document.getElementById("whyLine").textContent = whyText(event);
       document.getElementById("detail").textContent =
         `${fmt(event.ts_start)} · track ${event.track_id ?? "—"} · dwell ${event.dwell_s ?? "—"}s · ${(event.classes || []).join(", ") || "—"}`;

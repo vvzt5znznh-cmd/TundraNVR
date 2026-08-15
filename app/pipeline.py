@@ -595,18 +595,18 @@ class Pipeline:
         )
         node_banner = "Detect · idle"
         if self._live_tracks:
-            bits = [
-                f"#{t.track_id} {t.cls} {t.dwell_at(now):.0f}s"
-                for t in self._live_tracks[:3]
-            ]
+            bits = [f"#{t.track_id} {t.cls}" for t in self._live_tracks[:2]]
             node_banner = "Detect · " + ", ".join(bits)
+            extra = len(self._live_tracks) - 2
+            if extra > 0:
+                node_banner += f" +{extra}"
         elif dets:
-            node_banner = "Detect · " + ", ".join(f"{d.cls} {d.conf:.2f}" for d in dets[:3])
+            node_banner = "Detect · " + ", ".join(d.cls for d in dets[:2])
         elif self._yolo_ran:
             node_banner = "Detect · unnamed"
         elif self._has_motion:
-            node_banner = "Detect · Edge kept this locally"
-        node = draw_overlay(frame, dets, self._motion_area, self._has_motion, banner=node_banner)
+            node_banner = "Detect · kept locally"
+        node = draw_overlay(frame, dets, self._motion_area, self._has_motion, banner=node_banner[:64])
         hub_dets = dets if self._hub_banner else []
         hub_banner = self._hub_banner or "Verify idle — waiting for Detect to escalate"
         hub = draw_overlay(frame, hub_dets, self._motion_area, self._has_motion, banner=hub_banner[:72])

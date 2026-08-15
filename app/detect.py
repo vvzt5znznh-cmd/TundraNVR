@@ -174,14 +174,16 @@ def draw_overlay(
     status = banner or f"motion={'yes' if has_motion else 'no'}"
     if not banner and motion_area is not None:
         status += f" area={motion_area}"
+    h = vis.shape[0]
+    cv2.rectangle(vis, (0, h - 30), (vis.shape[1], h), (8, 8, 8), -1)
     cv2.putText(
         vis,
-        status[:72],
-        (10, 24),
+        status[:64],
+        (10, h - 10),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.62,
+        0.55,
         (240, 240, 240),
-        2,
+        1,
         cv2.LINE_AA,
     )
     return vis
@@ -216,15 +218,17 @@ def draw_edge_overlay(
             cv2.rectangle(vis, (x1, y1), (x2, y2), (40, 40, 40), 1)
     vis = cv2.addWeighted(overlay, 0.32, vis, 0.68, 0)
     label = "unusual" if unusual else ("motion" if has_motion else "quiet")
-    banner = f"Edge {label}  {score:.2f}  {reason}"
+    banner = f"Edge {label}  {score:.2f}"
+    h = vis.shape[0]
+    cv2.rectangle(vis, (0, h - 30), (vis.shape[1], h), (8, 8, 8), -1)
     cv2.putText(
         vis,
-        banner[:78],
-        (10, 28),
+        banner[:64],
+        (10, h - 10),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.62,
+        0.55,
         (245, 245, 245),
-        2,
+        1,
         cv2.LINE_AA,
     )
     return vis

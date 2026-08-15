@@ -9,12 +9,12 @@
 <body data-page="live" data-seat="edge">
   <header class="top" id="chrome"></header>
   <main class="console">
-    <p class="banner warn" id="verifyBanner" hidden></p>
     <ol class="cascade" id="handoff"></ol>
     <div class="live-grid">
       <section class="stage">
         <img id="stream" alt="Live camera" src="/api/stream.mjpg?seat=edge" />
         <p class="nosignal" id="nosignal" hidden>No camera on this host.</p>
+        <p class="banner warn" id="verifyBanner" hidden></p>
         <div class="learn-hud" id="learnHud">
           <div class="learn-hud-top">
             <span id="learnLabel">Learning this camera</span>
@@ -38,7 +38,7 @@
           <p class="kicker" id="learnKicker">This camera’s usual</p>
           <div class="bar thick"><span id="polBar"></span></div>
           <p class="lede" id="polLine"></p>
-          <div class="heat" id="heat" hidden></div>
+          <div class="heat" id="heat"></div>
           <div class="meters" id="whyMeters"></div>
         </div>
         <div class="objects" id="objects"></div>
