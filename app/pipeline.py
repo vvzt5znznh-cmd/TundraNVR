@@ -70,9 +70,9 @@ def bundled_sample(root: Path) -> Path | None:
 
 
 DEMO_CLIPS = (
-    ("street", "Street", "street.mp4"),
-    ("indoor", "Indoor", "indoor.mp4"),
-    ("package", "Left bag", "package.mp4"),
+    ("street", "Street — people, bikes, cars", "street.mp4"),
+    ("indoor", "Indoor — pedestrians", "indoor.mp4"),
+    ("package", "Left bag — unattended bag", "package.mp4"),
 )
 
 

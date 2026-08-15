@@ -18,11 +18,12 @@
         <span class="pill err" id="noauthPill" hidden>NO AUTH</span>
       </div>
       <p class="banner warn" id="verifyBanner" hidden></p>
-      <div class="presets" id="demoPresets">
-        <button type="button" class="ghost" data-clip="data/samples/street.mp4">Street</button>
-        <button type="button" class="ghost" data-clip="data/samples/indoor.mp4">Indoor</button>
-        <button type="button" class="ghost" data-clip="data/samples/package.mp4">Left bag</button>
-      </div>
+      <label class="sample-pick">
+        Sample
+        <select id="sampleSelect" aria-label="Sample clip">
+          <option value="">Sample…</option>
+        </select>
+      </label>
     </div>
     <div class="live-grid">
       <section class="stage">

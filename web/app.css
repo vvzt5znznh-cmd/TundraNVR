@@ -290,9 +290,30 @@ body[data-page="events"] .console {
   margin: 0;
   padding: 8px 12px;
 }
-.status-strip .presets {
-  flex: 1 1 100%;
+.sample-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.sample-pick select,
+select {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink);
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 5px 32px 5px 12px;
+  min-width: 12em;
 }
 .pill {
   background: rgba(20, 24, 29, 0.88);
@@ -492,8 +513,6 @@ body[data-page="live"] .internals[open] {
 .facts dt { color: var(--muted); }
 .facts dd { margin: 0; font-weight: 600; word-break: break-all; }
 .fields { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
-.presets { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 0; }
-.presets button[disabled] { opacity: 0.4; cursor: default; }
 .situation {
   list-style: none;
   margin: 10px 0 0;
