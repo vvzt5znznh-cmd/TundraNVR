@@ -320,8 +320,7 @@
     let seat = "edge";
     const params = new URLSearchParams(location.search);
     const raw = (params.get("seat") || "").toLowerCase();
-    if (raw === "raspberry") seat = "edge";
-    else if (["edge", "node", "hub", "detect", "verify"].includes(raw)) {
+    if (["edge", "node", "hub", "detect", "verify"].includes(raw)) {
       seat = raw === "detect" ? "node" : raw === "verify" ? "hub" : raw;
     }
     document.body.dataset.seat = seat;
@@ -336,7 +335,6 @@
         location.href = "/events";
         return;
       }
-      if (next === "raspberry") next = "edge";
       if (next === "detect") next = "node";
       if (next === "verify") next = "hub";
       if (!["edge", "node", "hub"].includes(next)) return;
@@ -407,7 +405,7 @@
             " → " +
             (escalate.mode_effective || "—") +
             " · Edge " +
-            (escalate.raspberry_trips || 0) +
+            (escalate.edge_trips || 0) +
             " → Detect " +
             (escalate.node_proposals || 0) +
             " → Verify " +
@@ -481,7 +479,7 @@
         const objs = document.getElementById("objects");
         const card = document.getElementById("sceneCard");
         const models = data.models || {};
-        const seatKey = seat === "raspberry" ? "edge" : seat;
+        const seatKey = seat;
         const line = document.getElementById("modelLine");
         line.textContent = modelLine(models[seatKey]);
         line.title = line.textContent;
@@ -723,7 +721,6 @@
         isAudit ? "" : event.anomaly ? COPY.alertPrefix + (event.anomaly_reason || "") : COPY.notAlert,
         event.summary || "",
         event.verifier_provider ? `Verifier: ${event.verifier_provider} (${event.verifier_status || "—"})` : "",
-        event.novelty_score != null ? `Novelty ${Number(event.novelty_score).toFixed(2)} (ranking only).` : "",
       ]
         .filter(Boolean)
         .join(" ");

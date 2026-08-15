@@ -28,7 +28,7 @@ from app.detect import Detection
 from app.pipeline import Pipeline
 
 
-STAGES = ("motion", "detect", "track", "verifier", "fusion", "novelty")
+STAGES = ("motion", "detect", "track", "verifier")
 FIXTURE_BANNER = (
     "eval fixture — not headline numbers. Do not report NAR/Pd/FAR from "
     "synthetic frames, CAVIAR, or bundled sample clips."
@@ -86,10 +86,9 @@ def run_stage(stage: str, frames: list[np.ndarray], labels: dict) -> dict:
     cfg.camera.height = frames[0].shape[0]
     cfg.events.write_media = False
     cfg.escalation.mode = str(labels.get("mode") or "recall")
-    cfg.vision.enabled = stage in {"verifier", "fusion", "novelty"}
-    cfg.fusion.enabled = stage in {"fusion", "novelty"}
-    cfg.embed.enabled = stage == "novelty"
-    cfg.embed.gate_alerts = False
+    cfg.vision.enabled = stage == "verifier"
+    cfg.fusion.enabled = False
+    cfg.embed.enabled = False
     pipe = Pipeline(cfg)
     if stage == "motion":
         pipe.detector.detect = lambda frame: []  # type: ignore[method-assign]
@@ -120,9 +119,8 @@ def run_stage(stage: str, frames: list[np.ndarray], labels: dict) -> dict:
     cam_days = duration_s / 86400.0
     nar = len(alerts) / cam_days if cam_days else 0.0
     tracks = {e.get("track_id") for e in events if e.get("track_id") is not None}
-    drone_events = [e for e in events if "drone" in (e.get("classes") or [])]
     esc = pipe.escalation_counts
-    rasp = esc["raspberry_trips"]
+    edge = esc["edge_trips"]
     node = esc["node_proposals"]
     hub_h = esc["hub_handoffs"]
     hub_a = esc["hub_alerts"]
@@ -148,13 +146,12 @@ def run_stage(stage: str, frames: list[np.ndarray], labels: dict) -> dict:
         "far_proxy": far_proxy,
         "p95_ms": round(p95, 1),
         "elapsed_s": round(elapsed, 3),
-        "drone_events": len(drone_events),
-        "raspberry_trips": rasp,
+        "edge_trips": edge,
         "node_proposals": node,
         "hub_handoffs": hub_h,
         "hub_alerts": hub_a,
         "operator_confirms": confirms,
-        "node_per_raspberry": round(node / rasp, 3) if rasp else 0.0,
+        "node_per_edge": round(node / edge, 3) if edge else 0.0,
         "hub_per_node": round(hub_h / node, 3) if node else 0.0,
         "alerts_per_hub": round(hub_a / hub_h, 3) if hub_h else 0.0,
         "verifier_unavailable": sum(
@@ -185,15 +182,14 @@ def write_table(rows: list[dict], dest: Path, *, headline_ok: bool) -> None:
         "p95_ms",
         "events",
         "tracks",
-        "raspberry_trips",
+        "edge_trips",
         "node_proposals",
         "hub_handoffs",
         "hub_alerts",
         "operator_confirms",
-        "node_per_raspberry",
+        "node_per_edge",
         "hub_per_node",
         "alerts_per_hub",
-        "drone_events",
     ]
     with dest.with_suffix(".csv").open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
@@ -217,13 +213,9 @@ def write_table(rows: list[dict], dest: Path, *, headline_ok: bool) -> None:
             f"{row.get('provenance')} | {_cell(row.get('nar_per_cam_day'))} | "
             f"{_cell(row.get('pd_recall'))} | {_cell(row.get('far_proxy'))} | "
             f"{_cell(row.get('precision'))} | {row['p95_ms']} | "
-            f"{row['raspberry_trips']} | {row['node_proposals']} | {row['hub_handoffs']} | "
+            f"{row['edge_trips']} | {row['node_proposals']} | {row['hub_handoffs']} | "
             f"{row['hub_alerts']} |"
         )
-    lines.append("")
-    lines.append(
-        "Drone metrics are a separate column (`drone_events`) and must not be folded into the headline sentence."
-    )
     dest.with_suffix(".md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
