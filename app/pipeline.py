@@ -21,7 +21,7 @@ from app.fusion import FusionBus, clock_context
 from app.motion import MotionDetector
 from app.mqtt_bus import MqttBus, MqttConfig
 from app.page import choose_paged_because
-from app.pol import PatternOfLife, absorb_into_file
+from app.pol import PatternOfLife, absorb_into_file, source_key
 from app.record import ClipWriter, NullWriter, cleanup_old_events, save_thumb
 from app.security import redact_source
 from app.tiers import SEAT_LABELS, models_payload
@@ -453,6 +453,7 @@ class Pipeline:
             self._fallback = False
             with self._lock:
                 self.status.source = str(source)
+            self._bind_pol(source)
             return cap
         sample = bundled_sample(self.cfg.root)
         if sample is not None:
@@ -468,10 +469,21 @@ class Pipeline:
                 self._fallback = True
                 with self._lock:
                     self.status.source = str(sample)
+                self._bind_pol(str(sample))
                 return cap
         with self._lock:
             self.status.source = str(source)
         return None
+
+    def _bind_pol(self, source: str | int) -> None:
+        key = source_key(source)
+        if self.pol.key == key:
+            return
+        try:
+            self.pol.close()
+        except Exception:
+            log.exception("Failed to save Pattern of Life before rebind")
+        self.pol = PatternOfLife(self.cfg.pol_dir, source)
 
     def _try_open(self, source: str | int) -> cv2.VideoCapture | None:
         cap = cv2.VideoCapture(source)
