@@ -128,6 +128,15 @@ body[data-page="events"] .console {
 body[data-page="live"] .console {
   grid-template-rows: 92px auto minmax(0, 1fr) auto;
 }
+body[data-page="live"]:has(.internals[open]) {
+  overflow-y: auto;
+}
+body[data-page="live"]:has(.internals[open]) .console {
+  overflow: visible;
+  flex: 1 0 auto;
+  min-height: calc(100% - 28px);
+  grid-template-rows: 92px auto minmax(240px, 52vh) auto;
+}
 body[data-page="events"] .console {
   grid-template-rows: auto minmax(0, 1fr);
 }
@@ -393,13 +402,8 @@ h2 { margin: 0 0 6px; font-size: 22px; letter-spacing: -0.03em; font-weight: 700
 .msg { min-height: 1.2em; font-size: 13px; color: var(--muted); margin: 8px 0 0; }
 .msg.err { color: var(--alert); }
 
-.internals { padding: 4px 18px 12px; }
-body[data-page="live"] .internals {
-  min-height: 0;
-  max-height: 22vh;
-  overflow: auto;
-}
-body[data-page="live"] .internals:not([open]) {
+.internals { padding: 4px 18px 16px; }
+body[data-page="live"] .internals[open] {
   max-height: none;
   overflow: visible;
 }
