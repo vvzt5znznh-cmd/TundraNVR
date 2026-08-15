@@ -35,6 +35,8 @@
       " cells sketched. That is not a site baseline. Review is not paged.",
     noAuth: "NO AUTH",
     verifyOffline: (hhmm) => "Verify offline since " + hhmm + " — unusual traffic goes to the Unverified shelf.",
+    verifyOfflineDemo: (hhmm) =>
+      "Verify offline since " + hhmm + ". This is a demo file — Review is not paged.",
     namerSub: "Detect names objects. It does not filter in recall mode.",
     paged: {
       learning: "Motion map still filling",
@@ -71,6 +73,8 @@
     live: "Live",
     waiting: "Waiting",
     sampleLoop: "Sample",
+    samplePick: "Sample",
+    samplePlaceholder: "Sample…",
     noSignal: "No camera on this host.",
     fallbackNote: "No camera on this host — looping a sample clip.",
     error: "Error",
@@ -258,8 +262,14 @@
     if (kicker) {
       kicker.textContent = demo ? "Demo motion map" : ready ? "Motion map" : "Sketching this view";
     }
-    renderHeat(document.getElementById("heat"), edge.grid, edge.usual_grid);
-    renderMeters(document.getElementById("whyMeters"), edge);
+    const heat = document.getElementById("heat");
+    const meters = document.getElementById("whyMeters");
+    if (heat) heat.hidden = demo;
+    if (meters) meters.hidden = demo;
+    if (!demo) {
+      renderHeat(heat, edge.grid, edge.usual_grid);
+      renderMeters(meters, edge);
+    }
   }
 
   function objectChips(items, limit) {
@@ -283,6 +293,40 @@
     const show = seat !== "edge" && Array.isArray(lines) && lines.length;
     el.hidden = !show;
     el.innerHTML = show ? lines.map((line) => `<li>${esc(line)}</li>`).join("") : "";
+  }
+
+  function clipFile(path) {
+    const text = String(path || "");
+    const parts = text.split(/[/\\]/);
+    return parts[parts.length - 1] || text;
+  }
+
+  function fillSampleSelect(clips, source) {
+    const sel = document.getElementById("sampleSelect");
+    if (!sel) return;
+    const list = Array.isArray(clips)
+      ? clips.filter((c) => c && c.present && c.path)
+      : null;
+    if (list) {
+      const key = list.map((c) => c.path).join("|");
+      if (sel.dataset.key !== key) {
+        sel.innerHTML =
+          `<option value="">${esc(COPY.samplePlaceholder)}</option>` +
+          list
+            .map((c) => `<option value="${esc(c.path)}">${esc(c.label || clipFile(c.path))}</option>`)
+            .join("");
+        sel.dataset.key = key;
+      }
+    }
+    const name = clipFile(source);
+    let want = "";
+    for (const opt of sel.options) {
+      if (opt.value && (opt.value === source || clipFile(opt.value) === name)) {
+        want = opt.value;
+        break;
+      }
+    }
+    if (document.activeElement !== sel && sel.value !== want) sel.value = want;
   }
 
   function setLine(el, text) {
@@ -368,6 +412,7 @@
         if (!res.ok) throw new Error(data.detail || COPY.error);
         currentSource = data.source || source;
         document.getElementById("sourceInput").value = currentSource;
+        fillSampleSelect(null, currentSource);
         document.getElementById("stream").src = "/api/stream.mjpg?seat=" + seat + "&t=" + Date.now();
         msg.textContent = "";
         msg.className = "msg";
@@ -442,7 +487,9 @@
         if (verifyBanner) {
           if (data.verify_offline_since) {
             verifyBanner.hidden = false;
-            verifyBanner.textContent = COPY.verifyOffline(data.verify_offline_since);
+            verifyBanner.textContent = data.fallback
+              ? COPY.verifyOfflineDemo(data.verify_offline_since)
+              : COPY.verifyOffline(data.verify_offline_since);
           } else {
             verifyBanner.hidden = true;
             verifyBanner.textContent = "";
@@ -553,17 +600,7 @@
           objs.innerHTML = objectChips(node.classes || data.last_detections || [], 6);
         }
         renderSituation(document.getElementById("situation"), data.situation, seat);
-        const presets = document.getElementById("demoPresets");
-        if (presets && Array.isArray(data.demo_clips)) {
-          const present = {};
-          data.demo_clips.forEach((clip) => {
-            present[clip.path] = Boolean(clip.present);
-          });
-          presets.querySelectorAll("button[data-clip]").forEach((btn) => {
-            const path = btn.getAttribute("data-clip");
-            btn.disabled = present[path] === false;
-          });
-        }
+        fillSampleSelect(data.demo_clips, data.source || currentSource);
       } catch (err) {
         document.getElementById("status").textContent = COPY.error;
         document.getElementById("status").className = "pill err";
@@ -576,12 +613,13 @@
       ev.preventDefault();
       applySource(document.getElementById("sourceInput").value);
     });
-    document.querySelectorAll("#demoPresets [data-clip]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        if (btn.disabled) return;
-        applySource(btn.getAttribute("data-clip"));
+    const sampleSelect = document.getElementById("sampleSelect");
+    if (sampleSelect) {
+      sampleSelect.addEventListener("change", () => {
+        const path = sampleSelect.value;
+        if (path) applySource(path);
       });
-    });
+    }
     refresh();
     setInterval(refresh, 1500);
     fetch("/api/settings")

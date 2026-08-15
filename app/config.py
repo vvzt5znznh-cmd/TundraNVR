@@ -93,7 +93,7 @@ class MotionConfig:
 @dataclass
 class DetectionConfig:
     model: str = "yolov8n.pt"
-    conf: float = 0.4
+    conf: float = 0.5
     classes: list[str] = field(default_factory=lambda: list(BUILDING_CLASSES))
     device: str = "cpu"
     drone_model: str = ""
