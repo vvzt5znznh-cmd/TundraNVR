@@ -144,13 +144,7 @@ class ObjectDetector:
         return detections
 
 
-def draw_overlay(
-    frame: np.ndarray,
-    detections: list[Detection],
-    motion_area: int | None = None,
-    has_motion: bool = False,
-    banner: str = "",
-) -> np.ndarray:
+def draw_overlay(frame: np.ndarray, detections: list[Detection]) -> np.ndarray:
     vis = frame.copy()
     for det in detections:
         x1, y1, x2, y2 = det.xyxy
@@ -171,64 +165,4 @@ def draw_overlay(
             1,
             cv2.LINE_AA,
         )
-    status = banner or f"motion={'yes' if has_motion else 'no'}"
-    if not banner and motion_area is not None:
-        status += f" area={motion_area}"
-    h = vis.shape[0]
-    cv2.rectangle(vis, (0, h - 30), (vis.shape[1], h), (8, 8, 8), -1)
-    cv2.putText(
-        vis,
-        status[:64],
-        (10, h - 10),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.55,
-        (240, 240, 240),
-        1,
-        cv2.LINE_AA,
-    )
-    return vis
-
-
-def draw_edge_overlay(
-    frame: np.ndarray,
-    grid: np.ndarray | None,
-    usual_grid: np.ndarray | None,
-    has_motion: bool,
-    score: float,
-    unusual: bool,
-    reason: str,
-) -> np.ndarray:
-    vis = frame.copy()
-    h, w = vis.shape[:2]
-    overlay = vis.copy()
-    grid_arr = grid if grid is not None else np.zeros((8, 8), dtype=np.float32)
-    usual = usual_grid if usual_grid is not None else np.zeros((8, 8), dtype=np.float32)
-    gh, gw = grid_arr.shape[:2]
-    for y in range(gh):
-        for x in range(gw):
-            x1, y1 = int(x * w / gw), int(y * h / gh)
-            x2, y2 = int((x + 1) * w / gw), int((y + 1) * h / gh)
-            freq = float(usual[y, x]) if usual.shape == grid_arr.shape else 0.0
-            motion = float(grid_arr[y, x])
-            if freq > 0.08:
-                cv2.rectangle(overlay, (x1, y1), (x2, y2), (70, 150, 70), -1)
-            if motion > 0.12:
-                color = (0, 140, 255) if freq < 0.08 else (40, 200, 90)
-                cv2.rectangle(overlay, (x1, y1), (x2, y2), color, -1)
-            cv2.rectangle(vis, (x1, y1), (x2, y2), (40, 40, 40), 1)
-    vis = cv2.addWeighted(overlay, 0.32, vis, 0.68, 0)
-    label = "unusual" if unusual else ("motion" if has_motion else "quiet")
-    banner = f"Edge {label}  {score:.2f}"
-    h = vis.shape[0]
-    cv2.rectangle(vis, (0, h - 30), (vis.shape[1], h), (8, 8, 8), -1)
-    cv2.putText(
-        vis,
-        banner[:64],
-        (10, h - 10),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.55,
-        (245, 245, 245),
-        1,
-        cv2.LINE_AA,
-    )
     return vis

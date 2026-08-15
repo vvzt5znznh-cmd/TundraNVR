@@ -16,16 +16,28 @@
     tripRan: "this trip",
     tripIdle: "idle",
     gap: "not the target",
-    baselineReady: "Baseline ready",
-    baselineLearn: (pct) => "Learning " + pct + "%",
-    polReady: (n) => "Baseline for this camera is ready (" + n + " cells with motion).",
-    polLearn: (n, need) =>
-      "Learning this camera’s usual footprint — " + n + " / " + need + " cells with repeated motion. Detect still runs; Review is not paged.",
+    sketchReady: "Motion map",
+    sketchLearn: (pct) => "Sketch " + pct + "%",
+    demoSketch: "Demo sketch",
+    polMap: (n) =>
+      "This PoC mapped " + n + " cells with motion. A real Pattern of Life needs days on this camera — not a 16-cell sketch.",
+    polSketch: (n, need) =>
+      "Sketching which cells have seen motion (" +
+      n +
+      " / " +
+      need +
+      "). A real PoL takes days; a looping file fills this in seconds. Detect still runs; Review is not paged.",
+    polDemo: (n, need) =>
+      "Looping demo file — " +
+      n +
+      " / " +
+      need +
+      " cells sketched. That is not a site baseline. Review is not paged.",
     noAuth: "NO AUTH",
     verifyOffline: (hhmm) => "Verify offline since " + hhmm + " — unusual traffic goes to the Unverified shelf.",
     namerSub: "Detect names objects. It does not filter in recall mode.",
     paged: {
-      learning: "Learning this camera",
+      learning: "Motion map still filling",
       sample: "Sample clip — not a live alert",
       unusual: "Unusual for this camera",
       named_object: "Named object",
@@ -66,12 +78,12 @@
     quiet: "Quiet",
     unusual: "Unusual",
     usual: "Usual",
-    learning: "Learning",
+    learning: "Sketching",
     sentDetect: "Sent to Detect",
     quietSub: "Kept on Edge. No detector.",
     unusualSub: "Upload to Detect.",
     usualSub: "Kept on Edge. No detector.",
-    learnBit: (n, need) => " Learning " + n + "/" + need + " cells.",
+    learnBit: (n, need) => " Motion map " + n + "/" + need + ".",
     nothingFrom: "Nothing from Edge",
     nothingSub: "Detector idle — usual motion never leaves Edge.",
     closedSub: "Closed here. Verify is not asked.",
@@ -87,7 +99,8 @@
     noMark: "No marked still for this event.",
     clip: "Clip",
     sampleWhy:
-      "This host is looping a short sample, so the baseline is only the first seconds of that loop — walking the rest of the clip still looks rare.",
+      "This host is looping a short demo file. The 16-cell motion sketch fills in seconds; that is not a Pattern of Life. Review is not paged.",
+    sourcePh: "RTSP, camera index (0), or data/samples/indoor.mp4",
   };
 
   function esc(value) {
@@ -223,32 +236,28 @@
     const pol = data.pol || {};
     const edge = (data.handoff || {}).edge || {};
     const { need, n, pct, ready } = coverage(pol);
+    const demo = Boolean(data.fallback);
     const polPill = document.getElementById("polPill");
     if (polPill) {
-      polPill.textContent = ready ? COPY.baselineReady : COPY.baselineLearn(pct);
-      polPill.classList.toggle("wait", !ready);
+      if (demo) {
+        polPill.textContent = COPY.demoSketch;
+        polPill.classList.add("wait");
+      } else {
+        polPill.textContent = ready ? COPY.sketchReady : COPY.sketchLearn(pct);
+        polPill.classList.toggle("wait", !ready);
+      }
     }
-    const line = ready ? COPY.polReady(n) : COPY.polLearn(n, need);
+    const line = demo ? COPY.polDemo(n, need) : ready ? COPY.polMap(n) : COPY.polSketch(n, need);
     const polLine = document.getElementById("polLine");
     if (polLine) polLine.textContent = line;
     const polLineDetails = document.getElementById("polLineDetails");
     if (polLineDetails) polLineDetails.textContent = line;
     setBar("polBar", pct);
-    setBar("polBarHud", pct);
     setBar("polBarDetails", pct);
-    const hud = document.getElementById("learnHud");
-    if (hud) {
-      hud.hidden = ready;
-      hud.classList.toggle("ready", ready);
-      const label = document.getElementById("learnLabel");
-      const pctEl = document.getElementById("learnPct");
-      if (label) {
-        label.textContent = ready ? COPY.baselineReady : "Learning this camera’s usual";
-      }
-      if (pctEl) pctEl.textContent = pct + "% · " + n + "/" + need;
-    }
     const kicker = document.getElementById("learnKicker");
-    if (kicker) kicker.textContent = ready ? "This camera’s usual" : "Learning this camera";
+    if (kicker) {
+      kicker.textContent = demo ? "Demo motion map" : ready ? "Motion map" : "Sketching this view";
+    }
     renderHeat(document.getElementById("heat"), edge.grid, edge.usual_grid);
     renderMeters(document.getElementById("whyMeters"), edge);
   }
@@ -372,7 +381,14 @@
         (data.tracks || []).map((t) => "#" + t.id + " " + t.cls + " " + t.dwell_s + "s").join(", ") || "—";
       const escalate = data.escalation || {};
       const rows = [
-        ["Baseline", (pol.confident ? COPY.baselineReady : COPY.baselineLearn(pct)) + " · " + n + " / " + need],
+        [
+          "Motion map",
+          (data.fallback ? COPY.demoSketch : pol.confident ? COPY.sketchReady : COPY.sketchLearn(pct)) +
+            " · " +
+            n +
+            " / " +
+            need,
+        ],
         ["Unusual score", (edge.score != null ? Number(edge.score).toFixed(2) : "—") + (edge.reason ? " · " + edge.reason : "")],
         ["Why", edge.why || edge.reason || "—"],
         ["Place / look / amount", Number(edge.occupancy_novelty || 0).toFixed(2) + " · " + Number(edge.visual_delta || 0).toFixed(2) + " · " + Number(edge.motion_spike || 0).toFixed(2)],
@@ -476,7 +492,7 @@
             setLine(whyEl, whyText);
           } else if (!pol.confident) {
             setLine(scene, COPY.learning);
-            setLine(sub, COPY.polLearn(n, need));
+            setLine(sub, data.fallback ? COPY.polDemo(n, need) : COPY.polSketch(n, need));
             setLine(whyEl, whyText);
           } else if (data.fallback && edge.upload) {
             setLine(scene, COPY.sentDetect);

@@ -10,24 +10,19 @@
   <header class="top" id="chrome"></header>
   <main class="console">
     <ol class="cascade" id="handoff"></ol>
+    <div class="status-strip">
+      <div class="hud">
+        <span class="pill wait" id="status">Connecting</span>
+        <span class="pill" id="seatPill">Edge</span>
+        <span class="pill wait" id="polPill">Sketch…</span>
+        <span class="pill err" id="noauthPill" hidden>NO AUTH</span>
+      </div>
+      <p class="banner warn" id="verifyBanner" hidden></p>
+    </div>
     <div class="live-grid">
       <section class="stage">
         <img id="stream" alt="Live camera" src="/api/stream.mjpg?seat=edge" />
         <p class="nosignal" id="nosignal" hidden>No camera on this host.</p>
-        <p class="banner warn" id="verifyBanner" hidden></p>
-        <div class="learn-hud" id="learnHud">
-          <div class="learn-hud-top">
-            <span id="learnLabel">Learning this camera</span>
-            <span id="learnPct">0%</span>
-          </div>
-          <div class="bar thick"><span id="polBarHud"></span></div>
-        </div>
-        <div class="hud">
-          <span class="pill wait" id="status">Connecting</span>
-          <span class="pill" id="seatPill">Edge</span>
-          <span class="pill wait" id="polPill">Learning…</span>
-          <span class="pill err" id="noauthPill" hidden>NO AUTH</span>
-        </div>
       </section>
       <aside class="rail" id="sceneCard">
         <p class="kicker" id="sceneKicker">Unusual for this camera?</p>
@@ -35,7 +30,7 @@
         <p class="lede" id="sceneSub"></p>
         <p class="why" id="whyDetail"></p>
         <div class="learn-block" id="learnBlock">
-          <p class="kicker" id="learnKicker">This camera’s usual</p>
+          <p class="kicker" id="learnKicker">Motion map</p>
           <div class="bar thick"><span id="polBar"></span></div>
           <p class="lede" id="polLine"></p>
           <div class="heat" id="heat"></div>
@@ -58,7 +53,7 @@
       <dl class="facts" id="facts"></dl>
       <form class="fields" id="sourceForm">
         <input id="sourceInput" name="source" autocomplete="off" spellcheck="false"
-          placeholder="RTSP URL, file path, or camera index (0)" />
+          placeholder="RTSP, camera index (0), or data/samples/indoor.mp4" />
         <button class="btn" type="submit">Set source</button>
       </form>
       <p class="msg" id="settingsMsg"></p>

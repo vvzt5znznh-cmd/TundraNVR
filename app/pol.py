@@ -141,10 +141,11 @@ class PatternOfLife:
             if learning and has_motion:
                 unusual = True
                 score = max(score, 0.45)
-                reason = "learning this camera"
+                reason = "sketching this view"
                 why = (
-                    "Edge is still mapping where this camera is usually busy. "
-                    "Until that baseline is ready, every motion is sent to Detect."
+                    "Edge is filling a coarse motion map (which cells have seen motion). "
+                    "That is not a site Pattern of Life. Until 16 cells have repeats, "
+                    "every motion is sent to Detect."
                 )
             elif not has_motion:
                 unusual = False

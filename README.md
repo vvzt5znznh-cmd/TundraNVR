@@ -18,9 +18,25 @@ pip install -r requirements.txt
 python -m app.main
 ```
 
-Set `camera.source` to index `0` or an RTSP URL (Details on Live). Events is Incident / Normal — Normal trains Edge’s Pattern of Life (two Normals before a large absorb; sample/fixture never absorb). Live: video + verdict rail. Events: marked still of what was spotted, then the clip. Review leads with **why it was paged** (`paged_because`). A few percent of Verify-suppressed trips are still shown as **Audit** so false negatives are measurable (`/health` `audit_shown` / `audit_confirmed`).
+Set `camera.source` to index `0` or an RTSP URL (Details on Live). Events is Incident / Normal — Normal trains Edge’s occupancy map (two Normals before a large absorb; sample/fixture never absorb). Live: clean video (no chrome on the JPEG) plus a verdict rail. Events: marked still of what was spotted, then the clip. Review leads with **why it was paged** (`paged_because`). A few percent of Verify-suppressed trips are still shown as **Audit** so false negatives are measurable (`/health` `audit_shown` / `audit_confirmed`).
 
-Tracks age in **wall-clock seconds** (`tracking.max_age_s`). Detect still runs every `pipeline.idle_detect_seconds` when the scene is still, so unattended-bag / loiter can fire in a quiet corridor. Learning ready is **cell coverage**, not a tick count; Review is not paged while learning.
+Tracks age in **wall-clock seconds** (`tracking.max_age_s`). Detect still runs every `pipeline.idle_detect_seconds` when the scene is still, so unattended-bag / loiter can fire in a quiet corridor. The 16-cell fill is a **motion sketch**, not a seasonal Pattern of Life. Review is not paged while that sketch is filling, and never paged on sample fallback.
+
+## Demo clips (no camera)
+
+This host often has no USB camera. The process then loops a file under `data/samples/` (gitignored). Fetch the default:
+
+```bash
+python scripts/download_sample.py
+```
+
+| Clip | What it is for | How to use |
+| --- | --- | --- |
+| `indoor.mp4` | Intel indoor pedestrians — YOLOv8n can name people | **Default fallback.** Detect namer + tracks. |
+| `package.mp4` | CAVIAR LeftBag — unattended bag | Details → `data/samples/package.mp4`. Bag rule: backpack/handbag/suitcase, dwell ≥8s, no person within 120px in the last 2s. |
+| `entrance.mp4` | CAVIAR 2004 mall / Promod | **Not the default.** Grain, glass, and mannequins produce false person boxes. |
+
+A 15–50s loop **cannot** stand in for months of Pattern of Life. Sixteen of 64 cells with two motion hits fill in seconds on a loop; that only answers “which cells have moved in this session.” Sample provenance does not page Review and does not absorb into the occupancy map. A real PoL needs **this** live camera over days.
 
 Optional API token: `server.api_token` or `TUNDRANVR_API_TOKEN` (Bearer or `X-API-Token`) on `GET /api/events`, `GET /media`, `PUT /api/settings`, and event review. Live MJPEG stays open. Empty token = no auth; Live shows a **NO AUTH** pill. Event `source` in SQLite is redacted (no RTSP userinfo).
 

@@ -14,7 +14,7 @@ import numpy as np
 
 from app.config import AppConfig
 from app.db import EventStore, utc_now
-from app.detect import Detection, ObjectDetector, boxes_payload, draw_edge_overlay, draw_overlay
+from app.detect import Detection, ObjectDetector, boxes_payload, draw_overlay
 from app.embed import EmbeddingIndex, thumb_hist
 from app.escalate import decide_hub, effective_mode
 from app.fusion import FusionBus, clock_context
@@ -58,7 +58,7 @@ def _placeholder_jpeg(width: int, height: int, quality: int) -> bytes:
 
 
 def bundled_sample(root: Path) -> Path | None:
-    names = ("entrance.mp4", "package.mp4", "drone.mp4", "sample.mp4")
+    names = ("indoor.mp4", "package.mp4", "drone.mp4", "sample.mp4", "entrance.mp4")
     dirs = (root / "data" / "samples", root / "data")
     for folder in dirs:
         for name in names:
@@ -584,33 +584,10 @@ class Pipeline:
 
     def _publish_live(self, frame: np.ndarray, now: float) -> None:
         dets = self._last_dets if now <= self._overlay_until else []
-        edge = draw_edge_overlay(
-            frame,
-            self._motion_grid,
-            self._usual_grid,
-            self._has_motion,
-            self._last_pol_score,
-            self._last_pol_unusual,
-            self._last_pol_reason,
-        )
-        node_banner = "Detect · idle"
-        if self._live_tracks:
-            bits = [f"#{t.track_id} {t.cls}" for t in self._live_tracks[:2]]
-            node_banner = "Detect · " + ", ".join(bits)
-            extra = len(self._live_tracks) - 2
-            if extra > 0:
-                node_banner += f" +{extra}"
-        elif dets:
-            node_banner = "Detect · " + ", ".join(d.cls for d in dets[:2])
-        elif self._yolo_ran:
-            node_banner = "Detect · unnamed"
-        elif self._has_motion:
-            node_banner = "Detect · kept locally"
-        node = draw_overlay(frame, dets, self._motion_area, self._has_motion, banner=node_banner[:64])
+        jpeg_edge = _encode_jpeg(frame, self.cfg.pipeline.jpeg_quality)
+        node = draw_overlay(frame, dets)
         hub_dets = dets if self._hub_banner else []
-        hub_banner = self._hub_banner or "Verify idle — waiting for Detect to escalate"
-        hub = draw_overlay(frame, hub_dets, self._motion_area, self._has_motion, banner=hub_banner[:72])
-        jpeg_edge = _encode_jpeg(edge, self.cfg.pipeline.jpeg_quality)
+        hub = draw_overlay(frame, hub_dets)
         jpeg_node = _encode_jpeg(node, self.cfg.pipeline.jpeg_quality)
         jpeg_hub = _encode_jpeg(hub, self.cfg.pipeline.jpeg_quality)
         with self._lock:
@@ -938,7 +915,7 @@ class Pipeline:
         thumb_name = f"{stamp}{suffix}.jpg"
         clip_path = self.cfg.clips_dir / clip_name
         thumb_path = self.cfg.thumbs_dir / thumb_name
-        vis = draw_overlay(frame, detections, self._motion_area, True)
+        vis = draw_overlay(frame, detections)
         writer: ClipWriter | NullWriter
         try:
             if self.cfg.events.write_media:
@@ -1141,8 +1118,8 @@ class Pipeline:
         detail = getattr(pol, "why", "") or pol.reason
         if self._fallback:
             extra = (
-                "This host is looping a short sample, so the baseline is only the first "
-                "seconds of that loop — walking the rest of the clip still looks rare."
+                "This host is looping a short demo file. The 16-cell motion sketch "
+                "fills in seconds; that is not a Pattern of Life. Review is not paged."
             )
             if extra not in detail:
                 detail = f"{detail} {extra}".strip()
@@ -1162,10 +1139,7 @@ class Pipeline:
         if not self.cfg.events.write_media or active.last_frame is None:
             return
         dets = active.last_dets or []
-        labels = ", ".join(
-            f"#{d.track_id} {d.cls}" if d.track_id is not None else d.cls for d in dets[:3]
-        ) or "motion"
-        vis = draw_overlay(active.last_frame, dets, banner=f"Spotted · {labels}"[:72])
+        vis = draw_overlay(active.last_frame, dets)
         try:
             save_thumb(
                 vis,

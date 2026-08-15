@@ -15,16 +15,18 @@ Single Python service. There are no tests or linters configured in this repo bes
 - `torch` and `torchvision` MUST both be the CPU builds from `https://download.pytorch.org/whl/cpu` and must match. Installing `requirements.txt` on its own pulls a generic `torchvision` wheel from PyPI that is ABI-incompatible with the CPU `torch`, producing `RuntimeError: operator torchvision::nms does not exist` at first detection. The update script fixes this by force-reinstalling the `+cpu` `torchvision` wheel last. If you ever see that NMS error, run `pip install --force-reinstall --no-deps torchvision --index-url https://download.pytorch.org/whl/cpu`.
 
 ### Sample video + model
-- Default `camera.source` is index `0` (or an RTSP URL set in Details).
+- Default `camera.source` is index `0` (or an RTSP URL set in Details). With no camera, the process loops `data/samples/indoor.mp4` (Intel pedestrians). Fetch with `python scripts/download_sample.py`.
+- `package.mp4` is the unattended-bag demo (set in Details). Do not default to `entrance.mp4` (CAVIAR mall — YOLO false persons).
+- A looping file is a **motion sketch**, not a site Pattern of Life. Sample fallback does not page Review.
 - YOLO downloads `yolov8n.pt` on the first **Edge trip**. Needs internet. AGPL — see LICENSING.md.
 
 ### Run
 - Start the app (dev): `python -m app.main` — `http://0.0.0.0:8000`.
-- Web UI: `/` (Live) and `/events` (Review). JSON: `/health`, `/api/events`. Dark ops chrome; Incident/Normal on Events. Seats: Edge / Detect / Verify / Review.
+- Web UI: `/` (Live) and `/events` (Review). JSON: `/health`, `/api/events`. Live JPEG has no chrome on the picture (pills and Verify banner sit around the feed). Seats: Edge / Detect / Verify / Review. Detect/Verify may draw boxes; Edge is the raw frame.
 
 ### Testing / behavior notes
 - Motion is OpenCV frame difference. Detect also runs on an idle sweep (`idle_detect_seconds`) so still bags/people keep wall-clock dwell. Tracks: one track ≤ one event. Age is seconds (`max_age_s`), not ticks. Dwell is on `/api/events` (`dwell_s`, `track_id`).
 - Hub verifier is local-only unless `vision.allow_cloud: true`. Fail-open: `verifier_status=unavailable` keeps the rule alert as `operator_status=unverified` (separate Events shelf). A few percent of Verify-suppressed trips page as `audit`.
 - Escalation default is `auto` (recall while Verify is healthy, else `pol_score`). Explicit `recall` / `pol_score` remain for eval. Detect is a namer in recall. `/health` → `escalation` (`mode`, `mode_effective`, `paged_because`, audit + latency) and `models` (want vs running per seat).
 - `python scripts/eval.py --smoke` writes a fixture ablation table (NAR/Pd/FAR language); never treat it as site headline numbers. Without `--allow-fixture` / `--smoke`, eval refuses headline metrics when provenance is not `live`.
-- Sample fallback does not page Review. Learning ready is cell coverage. Do not add audio, face recognition, LPR, or emotion recognition.
+- Sample fallback does not page Review. The 16/64 cell fill is a session motion map. Do not add audio, face recognition, LPR, or emotion recognition.

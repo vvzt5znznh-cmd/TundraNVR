@@ -14,7 +14,7 @@ REASONS = (
 )
 
 LABELS = {
-    "learning": "Learning this camera",
+    "learning": "Motion map still filling",
     "sample": "Sample clip — not a live alert",
     "unusual": "Unusual for this camera",
     "named_object": "Named object",
