@@ -23,8 +23,8 @@ Single Python service. There are no tests or linters configured in this repo bes
 - Web UI: `/` (Live) and `/events` (Review). JSON: `/health`, `/api/events`. Dark ops chrome; Incident/Normal on Events. Seats: Edge / Detect / Verify / Review.
 
 ### Testing / behavior notes
-- Motion is OpenCV frame difference. YOLO only on Edge trips. Tracks: one track ≤ one event. Dwell is on `/api/events` (`dwell_s`, `track_id`).
-- Hub verifier is local-only unless `vision.allow_cloud: true`. Fail-open: `verifier_status=unavailable` keeps the rule alert.
-- Escalation default is `recall` (any plausible Node trip → Hub). Do not gate on YOLO/VLM confidence. `/health` → `escalation` and `models` (want vs running per seat).
-- `python scripts/eval.py --smoke` writes a fixture ablation table (NAR/Pd/FAR language); never treat it as site headline numbers.
-- Do not add audio, face recognition, LPR, or emotion recognition.
+- Motion is OpenCV frame difference. Detect also runs on an idle sweep (`idle_detect_seconds`) so still bags/people keep wall-clock dwell. Tracks: one track ≤ one event. Age is seconds (`max_age_s`), not ticks. Dwell is on `/api/events` (`dwell_s`, `track_id`).
+- Hub verifier is local-only unless `vision.allow_cloud: true`. Fail-open: `verifier_status=unavailable` keeps the rule alert as `operator_status=unverified` (separate Events shelf). A few percent of Verify-suppressed trips page as `audit`.
+- Escalation default is `auto` (recall while Verify is healthy, else `pol_score`). Explicit `recall` / `pol_score` remain for eval. Detect is a namer in recall. `/health` → `escalation` (`mode`, `mode_effective`, `paged_because`, audit + latency) and `models` (want vs running per seat).
+- `python scripts/eval.py --smoke` writes a fixture ablation table (NAR/Pd/FAR language); never treat it as site headline numbers. Without `--allow-fixture` / `--smoke`, eval refuses headline metrics when provenance is not `live`.
+- Sample fallback does not page Review. Learning ready is cell coverage. Do not add audio, face recognition, LPR, or emotion recognition.

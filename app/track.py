@@ -42,7 +42,6 @@ class Track:
     first_seen: float
     last_seen: float
     hits: int = 1
-    time_since_update: int = 0
     class_hist: dict[str, int] = field(default_factory=dict)
     traj: list[tuple[float, float, float]] = field(default_factory=list)
     zone_name: str = ""
@@ -50,6 +49,13 @@ class Track:
     zone_exits: list[str] = field(default_factory=list)
     event_id: int | None = None
     confirmed: bool = False
+
+    def age_s(self, now: float) -> float:
+        return max(0.0, now - self.last_seen)
+
+    def dwell_at(self, now: float) -> float:
+        """Wall-clock seconds since first observe; accrues while the track is alive."""
+        return max(0.0, now - self.first_seen)
 
     def as_detection(self) -> Detection:
         return Detection(cls=self.cls, conf=self.conf, xyxy=self.xyxy, track_id=self.track_id)
@@ -117,12 +123,13 @@ class Track:
                 deltas.append(abs(d) / dt)
         return float(sum(deltas) / len(deltas)) if deltas else 0.0
 
-    def features(self, frame_h: int = 720) -> dict:
+    def features(self, frame_h: int = 720, now: float | None = None) -> dict:
         mean_s, peak_s = self.speeds()
+        dwell = self.dwell_at(now) if now is not None else self.dwell_s
         return {
             "track_id": self.track_id,
             "cls": self.cls,
-            "dwell_s": round(self.dwell_s, 2),
+            "dwell_s": round(dwell, 2),
             "path_length": round(self.path_length, 1),
             "mean_speed": round(mean_s, 2),
             "peak_speed": round(peak_s, 2),
@@ -138,10 +145,10 @@ class Track:
 
 
 class ByteTracker:
-    """Greedy IoU tracker (ByteTrack-style high-score association)."""
+    """Greedy IoU tracker. Age and dwell are wall-clock seconds, not ticks."""
 
-    def __init__(self, max_age: int = 15, min_hits: int = 2, iou_match: float = HIGH_IOU) -> None:
-        self.max_age = max(1, max_age)
+    def __init__(self, max_age: float = 15.0, min_hits: int = 2, iou_match: float = HIGH_IOU) -> None:
+        self.max_age = max(0.5, float(max_age))
         self.min_hits = max(1, min_hits)
         self.iou_match = iou_match
         self._next_id = 1
@@ -183,8 +190,7 @@ class ByteTracker:
 
         for tid in list(unmatched_tracks):
             tr = self.tracks[tid]
-            tr.time_since_update += 1
-            if tr.time_since_update > self.max_age:
+            if tr.age_s(now) > self.max_age:
                 del self.tracks[tid]
 
         for di in unmatched_dets:
@@ -211,9 +217,7 @@ class ByteTracker:
         for tr in self.tracks.values():
             if tr.hits >= self.min_hits:
                 tr.confirmed = True
-            if tr.confirmed and tr.time_since_update == 0:
-                live.append(tr)
-            elif tr.confirmed:
+            if tr.confirmed:
                 live.append(tr)
         return sorted(live, key=lambda t: t.track_id)
 
@@ -227,7 +231,6 @@ class ByteTracker:
         tr.cls = label
         tr.class_hist[label] = tr.class_hist.get(label, 0) + 1
         tr.hits += 1
-        tr.time_since_update = 0
         tr.last_seen = now
         cx, cy = _center(det.xyxy)
         tr.traj.append((now, cx, cy))
@@ -246,16 +249,18 @@ class ByteTracker:
 def unattended_bags(
     tracks: list[Track],
     *,
+    now: float,
     dwell_seconds: float = 8.0,
     person_radius: float = 120.0,
+    person_fresh_s: float = 2.0,
 ) -> list[Track]:
     """Bag track persists > T seconds with no person track within R pixels."""
-    people = [t for t in tracks if t.cls == "person" and t.time_since_update <= 2]
+    people = [t for t in tracks if t.cls == "person" and t.age_s(now) <= person_fresh_s]
     flagged: list[Track] = []
     for bag in tracks:
         if bag.cls not in BAG_CLASSES:
             continue
-        if bag.dwell_s < dwell_seconds:
+        if bag.dwell_at(now) < dwell_seconds:
             continue
         bc = _center(bag.xyxy)
         near = any(_dist(bc, _center(p.xyxy)) <= person_radius for p in people)

@@ -7,7 +7,6 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app.config import (
@@ -17,7 +16,7 @@ from app.config import (
     public_settings,
     save_runtime_settings,
 )
-from app.pipeline import Pipeline
+from app.page import choose_paged_because, label as paged_label
 from app.security import redact_source
 from app.version import VERSION, version_payload
 
@@ -40,7 +39,7 @@ class EventReview(BaseModel):
     action: str = Field(min_length=1, max_length=20)
 
 
-def _require_mutating_auth(
+def _require_token(
     authorization: str | None = Header(default=None),
     x_api_token: str | None = Header(default=None, alias="X-API-Token"),
 ) -> None:
@@ -69,7 +68,6 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="TundraNVR", version=VERSION, lifespan=lifespan)
 web_dir = cfg.web_dir
-app.mount("/media", StaticFiles(directory=str(cfg.data_dir)), name="media")
 
 
 @app.get("/health")
@@ -112,16 +110,25 @@ async def mjpeg_stream(seat: str = "node") -> StreamingResponse:
 
 
 @app.get("/api/events")
-def list_events(limit: int = 50, alerts: bool = False) -> JSONResponse:
+def list_events(
+    limit: int = 50,
+    alerts: bool = False,
+    unverified: bool = False,
+    _: None = Depends(_require_token),
+) -> JSONResponse:
     limit = max(1, min(limit, 200))
     events = []
-    for row in pipeline.store.list_events(limit, alerts_only=alerts):
+    for row in pipeline.store.list_events(
+        limit,
+        alerts_only=alerts,
+        unverified_only=unverified,
+    ):
         events.append(_event_json(row))
     return JSONResponse(events)
 
 
 @app.get("/api/events/{event_id}")
-def get_event(event_id: int) -> JSONResponse:
+def get_event(event_id: int, _: None = Depends(_require_token)) -> JSONResponse:
     row = pipeline.store.get(event_id)
     if not row:
         raise HTTPException(status_code=404, detail="event not found")
@@ -132,7 +139,7 @@ def get_event(event_id: int) -> JSONResponse:
 def review_event(
     event_id: int,
     body: EventReview,
-    _: None = Depends(_require_mutating_auth),
+    _: None = Depends(_require_token),
 ) -> JSONResponse:
     action = (body.action or "").strip().lower()
     if action not in {"confirm", "dismiss"}:
@@ -154,7 +161,7 @@ def get_settings() -> dict:
 @app.put("/api/settings")
 def update_settings(
     body: SettingsUpdate,
-    _: None = Depends(_require_mutating_auth),
+    _: None = Depends(_require_token),
 ) -> dict:
     global cfg, pipeline
     try:
@@ -170,6 +177,15 @@ def update_settings(
         pipeline = Pipeline(cfg)
         pipeline.start()
     return public_settings(cfg)
+
+
+@app.get("/media/{path:path}")
+def media(path: str, _: None = Depends(_require_token)) -> FileResponse:
+    root = cfg.data_dir.resolve()
+    target = (root / path).resolve()
+    if not str(target).startswith(str(root)) or not target.is_file():
+        raise HTTPException(status_code=404, detail="not found")
+    return FileResponse(target)
 
 
 @app.get("/")
@@ -225,6 +241,9 @@ def _event_json(row: dict) -> dict:
         "boxes": feat.get("boxes") or [],
         "why": why,
         "frame": feat.get("frame") or {},
+        "paged_because": row.get("paged_because") or feat.get("paged_because") or "",
+        "paged_because_label": paged_label(row.get("paged_because") or feat.get("paged_because") or ""),
+        "provenance": row.get("provenance") or "live",
     }
 
 

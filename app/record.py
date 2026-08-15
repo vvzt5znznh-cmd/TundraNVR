@@ -21,6 +21,8 @@ def _even(value: int) -> int:
 class ClipWriter:
     """Write BGR frames to an H.264 MP4 via ffmpeg, with OpenCV fallback."""
 
+    drops = 0
+
     def __init__(self, path: Path, width: int, height: int, fps: float) -> None:
         self.path = path
         self.width = max(2, _even(width))
@@ -91,6 +93,7 @@ class ClipWriter:
                 self._proc.stdin.write(frame.tobytes())
                 return
             except BrokenPipeError:
+                ClipWriter.drops += 1
                 log.warning("ffmpeg pipe broke; remaining frames dropped for %s", self.path)
                 return
         if self._cv is not None:

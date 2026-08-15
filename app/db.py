@@ -66,6 +66,8 @@ class EventStore:
                 ("verifier_provider", "ALTER TABLE events ADD COLUMN verifier_provider TEXT"),
                 ("verifier_status", "ALTER TABLE events ADD COLUMN verifier_status TEXT"),
                 ("novelty_score", "ALTER TABLE events ADD COLUMN novelty_score REAL"),
+                ("paged_because", "ALTER TABLE events ADD COLUMN paged_because TEXT"),
+                ("provenance", "ALTER TABLE events ADD COLUMN provenance TEXT"),
             ):
                 if name not in cols:
                     self._conn.execute(ddl)
@@ -104,6 +106,20 @@ class EventStore:
                 )
                 """
             )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS absorb_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts TEXT NOT NULL,
+                    event_id INTEGER,
+                    source TEXT,
+                    action TEXT,
+                    force INTEGER,
+                    delta REAL,
+                    detail TEXT
+                )
+                """
+            )
             self._conn.commit()
 
     def enable_sqlite_vec(self) -> bool:
@@ -139,6 +155,8 @@ class EventStore:
         verifier_provider: str = "",
         verifier_status: str = "",
         novelty_score: float | None = None,
+        paged_because: str = "",
+        provenance: str = "live",
     ) -> int:
         with self._lock:
             cur = self._conn.execute(
@@ -147,9 +165,10 @@ class EventStore:
                     ts_start, ts_end, classes, score, thumb_path, clip_path,
                     anomaly, anomaly_reason, source, pol_score, stopped_at,
                     handoff, features, operator_status, track_id,
-                    verifier_provider, verifier_status, novelty_score
+                    verifier_provider, verifier_status, novelty_score,
+                    paged_because, provenance
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     ts_start,
@@ -170,6 +189,8 @@ class EventStore:
                     verifier_provider or None,
                     verifier_status or None,
                     novelty_score,
+                    paged_because or None,
+                    provenance or "live",
                 ),
             )
             self._conn.commit()
@@ -195,46 +216,60 @@ class EventStore:
         novelty_score: float | None = None,
         operator_status: str | None = None,
         stopped_at: str | None = None,
-    ) -> None:
+        paged_because: str | None = None,
+    ) -> dict[str, Any] | None:
         with self._lock:
-            if operator_status is None and stopped_at is None:
-                self._conn.execute(
-                    """
-                    UPDATE events SET summary = ?, anomaly = ?, anomaly_reason = ?,
-                        verifier_provider = ?, verifier_status = ?, novelty_score = ?
-                    WHERE id = ?
-                    """,
-                    (
-                        summary,
-                        1 if anomaly else 0,
-                        anomaly_reason,
-                        verifier_provider,
-                        verifier_status,
-                        novelty_score,
-                        event_id,
-                    ),
-                )
-            else:
-                self._conn.execute(
-                    """
-                    UPDATE events SET summary = ?, anomaly = ?, anomaly_reason = ?,
-                        verifier_provider = ?, verifier_status = ?, novelty_score = ?,
-                        operator_status = ?, stopped_at = ?
-                    WHERE id = ?
-                    """,
-                    (
-                        summary,
-                        1 if anomaly else 0,
-                        anomaly_reason,
-                        verifier_provider,
-                        verifier_status,
-                        novelty_score,
-                        operator_status or None,
-                        stopped_at,
-                        event_id,
-                    ),
-                )
+            row = self._conn.execute(
+                "SELECT * FROM events WHERE id = ?",
+                (event_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            current = self._row_to_dict(row)
+            status_now = current.get("operator_status") or ""
+            operator_final = status_now in {"confirmed", "dismissed"}
+            if operator_final:
+                operator_status = None
+                stopped_at = None
+                anomaly = bool(current.get("anomaly"))
+                anomaly_reason = current.get("anomaly_reason") or ""
+                summary = current.get("summary") or summary
+            fields = [
+                "summary = ?",
+                "anomaly = ?",
+                "anomaly_reason = ?",
+                "verifier_provider = ?",
+                "verifier_status = ?",
+                "novelty_score = ?",
+            ]
+            values: list[Any] = [
+                summary,
+                1 if anomaly else 0,
+                anomaly_reason,
+                verifier_provider,
+                verifier_status,
+                novelty_score,
+            ]
+            if operator_status is not None:
+                fields.append("operator_status = ?")
+                values.append(operator_status or None)
+            if stopped_at is not None:
+                fields.append("stopped_at = ?")
+                values.append(stopped_at)
+            if paged_because is not None:
+                fields.append("paged_because = ?")
+                values.append(paged_because or None)
+            values.append(event_id)
+            self._conn.execute(
+                f"UPDATE events SET {', '.join(fields)} WHERE id = ?",
+                values,
+            )
             self._conn.commit()
+            row = self._conn.execute(
+                "SELECT * FROM events WHERE id = ?",
+                (event_id,),
+            ).fetchone()
+        return self._row_to_dict(row) if row else None
 
     def event_for_track(self, track_id: int, source: str) -> dict[str, Any] | None:
         with self._lock:
@@ -339,19 +374,86 @@ class EventStore:
             ).fetchone()
         return self._row_to_dict(row) if row else None
 
-    def list_events(self, limit: int = 50, alerts_only: bool = False) -> list[dict[str, Any]]:
+    def list_events(
+        self,
+        limit: int = 50,
+        alerts_only: bool = False,
+        unverified_only: bool = False,
+        live_only: bool = False,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        args: list[Any] = []
+        if alerts_only:
+            clauses.append("anomaly = 1")
+            clauses.append("(operator_status IS NULL OR operator_status != 'unverified')")
+            clauses.append("(provenance IS NULL OR provenance = 'live')")
+        if unverified_only:
+            clauses.append("operator_status = 'unverified'")
+        if live_only:
+            clauses.append("(provenance IS NULL OR provenance = 'live')")
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        args.append(limit)
         with self._lock:
-            if alerts_only:
-                rows = self._conn.execute(
-                    "SELECT * FROM events WHERE anomaly = 1 ORDER BY id DESC LIMIT ?",
-                    (limit,),
-                ).fetchall()
-            else:
-                rows = self._conn.execute(
-                    "SELECT * FROM events ORDER BY id DESC LIMIT ?",
-                    (limit,),
-                ).fetchall()
+            rows = self._conn.execute(
+                f"SELECT * FROM events{where} ORDER BY id DESC LIMIT ?",
+                args,
+            ).fetchall()
         return [self._row_to_dict(row) for row in rows]
+
+    def recent_for_dedup(self, source: str, since_iso: str) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT * FROM events WHERE source = ? AND ts_start >= ?
+                ORDER BY id DESC LIMIT 40
+                """,
+                (source, since_iso),
+            ).fetchall()
+        return [self._row_to_dict(row) for row in rows]
+
+    def insert_absorb(
+        self,
+        *,
+        event_id: int | None,
+        source: str,
+        action: str,
+        force: bool,
+        delta: float,
+        detail: str = "",
+    ) -> None:
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO absorb_log (ts, event_id, source, action, force, delta, detail)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    _utc_now(),
+                    event_id,
+                    source,
+                    action,
+                    1 if force else 0,
+                    delta,
+                    detail or None,
+                ),
+            )
+            self._conn.commit()
+
+    def insert_disagreement(
+        self,
+        *,
+        event_id: int,
+        source: str,
+        detail: str,
+    ) -> None:
+        self.insert_absorb(
+            event_id=event_id,
+            source=source,
+            action="verdict_disagreement",
+            force=False,
+            delta=0.0,
+            detail=detail,
+        )
 
     def get(self, event_id: int) -> dict[str, Any] | None:
         with self._lock:
@@ -397,6 +499,8 @@ class EventStore:
         data["verifier_provider"] = data.get("verifier_provider") or ""
         data["verifier_status"] = data.get("verifier_status") or ""
         data["novelty_score"] = data.get("novelty_score")
+        data["paged_because"] = data.get("paged_because") or ""
+        data["provenance"] = data.get("provenance") or "live"
         return data
 
 

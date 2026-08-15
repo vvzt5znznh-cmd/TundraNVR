@@ -3,9 +3,10 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, field
 import logging
+import random
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import cv2
@@ -15,10 +16,11 @@ from app.config import AppConfig
 from app.db import EventStore, utc_now
 from app.detect import Detection, ObjectDetector, boxes_payload, draw_edge_overlay, draw_overlay
 from app.embed import EmbeddingIndex, thumb_hist
-from app.escalate import decide_hub
+from app.escalate import decide_hub, effective_mode
 from app.fusion import FusionBus, clock_context
 from app.motion import MotionDetector
 from app.mqtt_bus import MqttBus, MqttConfig
+from app.page import choose_paged_because
 from app.pol import PatternOfLife, absorb_into_file
 from app.record import ClipWriter, NullWriter, cleanup_old_events, save_thumb
 from app.security import redact_source
@@ -108,6 +110,14 @@ class _ActiveEvent:
     last_dets: list[Detection] = field(default_factory=list)
     fusion: dict = field(default_factory=dict)
     t0_mono: float = 0.0
+    provenance: str = "live"
+    can_page: bool = True
+    bag: bool = False
+    named: bool = False
+    learning: bool = False
+    unusual: bool = False
+    paged_because: str = ""
+    mode_effective: str = "recall"
 
 
 class Pipeline:
@@ -125,7 +135,7 @@ class Pipeline:
             device=cfg.detection.device,
         )
         self.tracker = ByteTracker(
-            max_age=cfg.tracking.max_age,
+            max_age=cfg.tracking.max_age_s,
             min_hits=cfg.tracking.min_hits,
             iou_match=cfg.tracking.iou_match,
         )
@@ -180,6 +190,13 @@ class Pipeline:
         self._active_source: str | int = cfg.resolved_source()
         self._file_loop = bool(cfg.camera.loop_file)
         self._fallback = False
+        self._ingest_kind = "live"
+        self._last_idle_detect = time.monotonic()
+        self._verify_ok_until = 0.0
+        self._verify_offline_since: float | None = time.time()
+        self.audit_shown = 0
+        self.audit_confirmed = 0
+        self._paged_counts: dict[str, int] = {}
         placeholder = _placeholder_jpeg(
             cfg.camera.width, cfg.camera.height, cfg.pipeline.jpeg_quality
         )
@@ -211,6 +228,7 @@ class Pipeline:
         self._stop.clear()
         self.status.running = True
         self.status.started_at = time.monotonic()
+        self._last_idle_detect = time.monotonic()
         self._thread = threading.Thread(target=self._run, name="nvr-pipeline", daemon=True)
         self._thread.start()
         log.info("Pipeline thread started")
@@ -243,11 +261,12 @@ class Pipeline:
     def health(self) -> dict:
         with self._lock:
             uptime = time.monotonic() - self.status.started_at if self.status.started_at else 0.0
+            now = time.monotonic()
             tracks = [
                 {
                     "id": t.track_id,
                     "cls": t.cls,
-                    "dwell_s": round(t.dwell_s, 1),
+                    "dwell_s": round(t.dwell_at(now), 1),
                     "zone": t.zone_name,
                 }
                 for t in self._live_tracks
@@ -258,6 +277,12 @@ class Pipeline:
             hub_a = self.escalation_counts["hub_alerts"]
             confirms = self.escalation_counts["operator_confirms"]
             hub_ran = bool((self.status.last_handoff.get("hub") or {}).get("ran"))
+            lat = list(self.verdict_latencies_ms)
+            mode_cfg = self.cfg.escalation.mode
+            mode_eff = effective_mode(mode_cfg, verify_healthy=self._verify_healthy())
+            offline = None
+            if self._verify_offline_since is not None:
+                offline = datetime.fromtimestamp(self._verify_offline_since).strftime("%H:%M")
             return {
                 "status": "ok" if self.status.running else "stopped",
                 "source": redact_source(self.status.source),
@@ -279,7 +304,8 @@ class Pipeline:
                 "reconnects": self.status.reconnects,
                 "uptime_s": round(uptime, 1),
                 "escalation": {
-                    "mode": self.cfg.escalation.mode,
+                    "mode": mode_cfg,
+                    "mode_effective": mode_eff,
                     "raspberry_trips": rasp,
                     "node_proposals": node,
                     "hub_handoffs": hub_h,
@@ -288,7 +314,17 @@ class Pipeline:
                     "node_per_raspberry": round(node / rasp, 3) if rasp else 0.0,
                     "hub_per_node": round(hub_h / node, 3) if node else 0.0,
                     "alerts_per_hub": round(hub_a / hub_h, 3) if hub_h else 0.0,
+                    "paged_because": dict(self._paged_counts),
+                    "audit_shown": self.audit_shown,
+                    "audit_confirmed": self.audit_confirmed,
                 },
+                "latency_ms": {
+                    "count": len(lat),
+                    "p50": round(_percentile(lat, 50), 1) if lat else None,
+                    "p95": round(_percentile(lat, 95), 1) if lat else None,
+                },
+                "clip_drops": int(ClipWriter.drops),
+                "verify_offline_since": offline,
                 "models": models_payload(
                     self.cfg,
                     provider=self.status.verifier_provider or effective_provider(self.cfg.vision),
@@ -300,8 +336,22 @@ class Pipeline:
                 "fallback": self._fallback,
             }
 
+    def _verify_healthy(self) -> bool:
+        return time.monotonic() < self._verify_ok_until
+
+    def _source_stored(self) -> str:
+        return redact_source(self.cfg.camera.source)
+
+    def _provenance(self) -> str:
+        if self._ingest_kind == "fixture":
+            return "fixture"
+        if self._fallback:
+            return "sample"
+        return "live"
+
     def ingest_frame(self, frame: np.ndarray, now: float | None = None) -> None:
         """Offline/eval entry: one resized frame through detect + track."""
+        self._ingest_kind = "fixture"
         frame = self._resize(frame)
         now = time.monotonic() if now is None else now
         self._ring.append(frame.copy())
@@ -331,15 +381,30 @@ class Pipeline:
         updated = self.store.update_review(event_id, status)
         if action == "confirm":
             self.escalation_counts["operator_confirms"] += 1
+            if (row.get("paged_because") or "") == "audit":
+                self.audit_confirmed += 1
         if action == "dismiss":
             features = row.get("features") or {}
-            source = row.get("source") or str(self.cfg.camera.source)
-            if features:
+            provenance = row.get("provenance") or "live"
+            source = row.get("source") or self._source_stored()
+            if provenance != "live":
+                log.info("Skip PoL absorb for %s event %s", provenance, event_id)
+            elif features:
                 try:
-                    if source == str(self.cfg.camera.source):
-                        self.pol.absorb(features)
+                    current = {self._source_stored(), str(self.cfg.camera.source)}
+                    if source in current or not source:
+                        result = self.pol.absorb(features)
                     else:
                         absorb_into_file(self.cfg.pol_dir, source, features)
+                        result = {"force": True, "delta": 0.0}
+                    self.store.insert_absorb(
+                        event_id=event_id,
+                        source=source,
+                        action="dismiss",
+                        force=bool(result.get("force")),
+                        delta=float(result.get("delta") or 0),
+                        detail=str(result),
+                    )
                 except Exception:
                     log.exception("Failed to fold dismissal into PoL")
         return updated
@@ -531,7 +596,7 @@ class Pipeline:
         node_banner = "Detect · idle"
         if self._live_tracks:
             bits = [
-                f"#{t.track_id} {t.cls} {t.dwell_s:.0f}s"
+                f"#{t.track_id} {t.cls} {t.dwell_at(now):.0f}s"
                 for t in self._live_tracks[:3]
             ]
             node_banner = "Detect · " + ", ".join(bits)
@@ -571,13 +636,18 @@ class Pipeline:
         fusion = self.fusion.snapshot(now) if self.cfg.fusion.enabled else None
         fusion_d = fusion.as_dict() if fusion else {}
 
-        edge_upload = has_motion and (
-            pol.unusual or not pol.confident or self._fallback
-        )
+        edge_trip = has_motion and (pol.unusual or not pol.confident or self._fallback)
+        idle_s = max(1.0, float(self.cfg.pipeline.idle_detect_seconds))
+        idle_due = (now - self._last_idle_detect) >= idle_s
+        run_detect = bool(edge_trip or idle_due)
+        if idle_due:
+            self._last_idle_detect = now
+        provenance = self._provenance()
+        can_page = provenance == "live" and bool(pol.confident)
         detections: list[Detection] = []
         yolo_ran = False
         tracks: list[Track] = []
-        if edge_upload:
+        if run_detect:
             yolo_ran = True
             try:
                 detections = self.detector.detect(frame)
@@ -596,11 +666,12 @@ class Pipeline:
                 for d in detections:
                     if d.xyxy == tr.xyxy:
                         d.track_id = tr.track_id
-                self._persist_track(tr, frame.shape[0])
+                self._persist_track(tr, frame.shape[0], now)
 
         bags = (
             unattended_bags(
                 tracks,
+                now=now,
                 dwell_seconds=self.cfg.monitoring.bag_dwell_seconds,
                 person_radius=self.cfg.monitoring.bag_person_radius,
             )
@@ -608,7 +679,7 @@ class Pipeline:
             else []
         )
         bag_ids = {t.track_id for t in bags}
-        node_received = edge_upload
+        node_received = run_detect
         named = bool(tracks) or bool(detections)
         no_badge = bool(fusion and not fusion.badge_within_window)
         decision = decide_hub(
@@ -620,17 +691,19 @@ class Pipeline:
             pol_score=pol.score,
             pol_min=self.cfg.escalation.pol_score_min,
             no_badge=no_badge,
+            verify_healthy=self._verify_healthy(),
         )
-        hub_needed = decision.hub_needed
-        # Fail-open: page until Hub adjudicates. Verifier may suppress.
-        page_operator = hub_needed
-        anomaly_reason = decision.reason
-        if edge_upload:
+        hub_needed = decision.hub_needed and can_page
+        # Fail-open into Verify only when we are allowed to page. Sample/learning never page.
+        page_operator = hub_needed and can_page
+        anomaly_reason = decision.reason if page_operator else ""
+        if run_detect and edge_trip:
             self.escalation_counts["raspberry_trips"] += 1
         peak = max((d.conf for d in detections), default=0.0)
         labels = sorted({t.cls for t in tracks} | {d.cls for d in detections})
         hub_detail = fallback_summary(labels, peak, anomaly_reason) if hub_needed else ""
         overlay_dets = [t.as_detection() for t in tracks] or detections
+        mode_eff = decision.mode
         handoff = _handoff_payload(
             pol=pol,
             has_motion=has_motion,
@@ -642,6 +715,8 @@ class Pipeline:
             anomaly_reason=anomaly_reason,
             hub_detail=hub_detail,
             tracks=tracks,
+            now=now,
+            mode_effective=mode_eff,
         )
         stopped = handoff["stopped_at"]
         self._yolo_ran = yolo_ran
@@ -661,7 +736,7 @@ class Pipeline:
                     "cls": t.cls,
                     "conf": round(t.conf, 3),
                     "track_id": t.track_id,
-                    "dwell_s": round(t.dwell_s, 1),
+                    "dwell_s": round(t.dwell_at(now), 1),
                     "xyxy": [int(v) for v in t.xyxy],
                     "zone": t.zone_name or "",
                 }
@@ -700,17 +775,24 @@ class Pipeline:
                         overlay_dets,
                         now,
                         hub_needed=need,
-                        page_operator=need,
+                        page_operator=need and can_page,
                         anomaly_reason=anomaly_reason if tr.track_id in bag_ids else (
                             anomaly_reason if need else ""
                         ),
                         pol_score=pol.score,
                         stopped_at=stopped,
                         handoff=handoff,
-                        features={**feats, **tr.features(frame.shape[0])},
+                        features={**feats, **tr.features(frame.shape[0], now)},
                         fusion=fusion_d,
+                        provenance=provenance,
+                        can_page=can_page,
+                        bag=tr.track_id in bag_ids,
+                        named=named,
+                        learning=not pol.confident,
+                        unusual=bool(pol.unusual),
+                        mode_effective=mode_eff,
                     )
-                if not tracks:
+                if not tracks and (detections or edge_trip):
                     self._touch_unnamed(
                         frame,
                         detections,
@@ -723,6 +805,13 @@ class Pipeline:
                         handoff=handoff,
                         features=feats,
                         fusion=fusion_d,
+                        provenance=provenance,
+                        can_page=can_page,
+                        bag=False,
+                        named=named,
+                        learning=not pol.confident,
+                        unusual=bool(pol.unusual),
+                        mode_effective=mode_eff,
                     )
         else:
             self._hub_banner = ""
@@ -739,12 +828,12 @@ class Pipeline:
                 self.status.last_handoff = handoff
         _ = live_ids
 
-    def _persist_track(self, tr: Track, frame_h: int) -> None:
-        feat = tr.features(frame_h)
+    def _persist_track(self, tr: Track, frame_h: int, now: float | None = None) -> None:
+        feat = tr.features(frame_h, now)
         self.store.upsert_track(
             {
                 "id": tr.track_id,
-                "source": str(self.cfg.camera.source),
+                "source": self._source_stored(),
                 "cls": tr.cls,
                 "first_seen": utc_now(),
                 "last_seen": utc_now(),
@@ -786,6 +875,12 @@ class Pipeline:
             existing.last_frame = frame.copy()
             existing.last_dets = detections
             existing.fusion = kwargs.get("fusion") or {}
+            existing.can_page = existing.can_page or kwargs.get("can_page", False)
+            existing.bag = existing.bag or kwargs.get("bag", False)
+            return
+        if self._is_dup(tr.cls, detections, now):
+            return
+        if self.store.event_for_track(tr.track_id, self._source_stored()):
             return
         if self.store.event_for_track(tr.track_id, str(self.cfg.camera.source)):
             return
@@ -829,6 +924,13 @@ class Pipeline:
         features: dict,
         track_id: int | None,
         fusion: dict | None = None,
+        provenance: str = "live",
+        can_page: bool = True,
+        bag: bool = False,
+        named: bool = False,
+        learning: bool = False,
+        unusual: bool = False,
+        mode_effective: str = "recall",
     ) -> None:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
         suffix = f"-t{track_id}" if track_id is not None else ""
@@ -872,12 +974,19 @@ class Pipeline:
             stopped_at=stopped_at,
             handoff=handoff,
             features=features,
-            source=str(self.cfg.camera.source),
+            source=self._source_stored(),
             track_id=track_id,
             last_frame=frame.copy(),
             last_dets=list(detections),
             fusion=fusion or {},
             t0_mono=time.monotonic(),
+            provenance=provenance,
+            can_page=can_page,
+            bag=bag,
+            named=named,
+            learning=learning,
+            unusual=unusual,
+            mode_effective=mode_effective,
         )
         if track_id is None:
             self._unnamed = active
@@ -908,11 +1017,20 @@ class Pipeline:
             log.exception("Error closing clip writer")
         classes = sorted(active.classes)
         score = round(active.score, 3)
-        rule_alert = bool(active.page_operator)
+        rule_alert = bool(active.page_operator and active.can_page)
         anomaly_reason = active.anomaly_reason
         if not anomaly_reason and rule_alert:
             anomaly_reason = "escalated to operator"
-        if active.page_operator:
+        paged_because = choose_paged_because(
+            provenance=active.provenance,
+            learning=active.learning,
+            bag=active.bag,
+            unusual=active.unusual,
+            named=active.named,
+        )
+        active.features = dict(active.features or {})
+        active.features["paged_because"] = paged_because
+        if active.page_operator and active.can_page:
             active.stopped_at = "operator"
         elif active.hub_needed:
             active.stopped_at = "hub"
@@ -924,6 +1042,11 @@ class Pipeline:
             node_note = f"Named {labels}. Detect closed this without asking Verify."
         thumb_rel = f"thumbs/{active.thumb_name}" if self.cfg.events.write_media else None
         clip_rel = f"clips/{active.clip_name}" if self.cfg.events.write_media else None
+        op_status = ""
+        if active.can_page and active.page_operator:
+            op_status = "pending"
+        elif not active.can_page:
+            op_status = ""
         event_id = None
         try:
             self._refresh_event_thumb(active)
@@ -936,22 +1059,24 @@ class Pipeline:
                 clip_path=clip_rel,
                 anomaly=rule_alert,
                 anomaly_reason=anomaly_reason,
-                source=active.source,
+                source=self._source_stored(),
                 pol_score=round(active.pol_score, 3),
                 stopped_at=active.stopped_at,
                 handoff=active.handoff,
                 features=active.features,
-                operator_status="pending" if active.page_operator else "",
+                operator_status=op_status,
                 track_id=active.track_id,
                 verifier_provider="",
                 verifier_status="",
+                paged_because=paged_because,
+                provenance=active.provenance,
             )
             self.store.update_summary(event_id, node_note)
             if active.track_id is not None:
                 tr = self.tracker.tracks.get(active.track_id)
                 if tr:
                     tr.event_id = event_id
-                    self._persist_track(tr, self.cfg.camera.height)
+                    self._persist_track(tr, self.cfg.camera.height, time.monotonic())
         except Exception:
             log.exception("Failed to persist event")
         if active.track_id is None:
@@ -972,9 +1097,10 @@ class Pipeline:
                 "stopped_at": active.stopped_at,
             },
         )
-        if event_id and active.hub_needed:
+        if event_id and active.hub_needed and active.can_page:
             self._run_verifier(event_id, active, classes, score, anomaly_reason, rule_alert)
         elif event_id:
+            self._paged_counts[paged_because] = self._paged_counts.get(paged_because, 0) + 1
             self.store.update_verdict(
                 event_id,
                 summary=node_note,
@@ -982,15 +1108,31 @@ class Pipeline:
                 anomaly_reason="",
                 verifier_provider="skipped",
                 verifier_status="node-closed",
+                paged_because=paged_because,
             )
             t0 = active.t0_mono or time.monotonic()
             self.verdict_latencies_ms.append((time.monotonic() - t0) * 1000.0)
-        if event_id and self.embeddings and self.cfg.events.write_media:
+        if event_id and self.embeddings and self.cfg.events.write_media and active.provenance == "live":
             self._index_embedding(event_id, active, classes)
         try:
             cleanup_old_events(self.store, self.cfg.data_dir, self.cfg.events.retention_days)
         except Exception:
             log.exception("Retention cleanup failed")
+
+    def _is_dup(self, cls: str, detections: list[Detection], now: float) -> bool:
+        window = max(1.0, float(self.cfg.tracking.dedup_seconds))
+        since = (datetime.now(timezone.utc) - timedelta(seconds=window)).isoformat()
+        recent = self.store.recent_for_dedup(self._source_stored(), since)
+        w, h = self.cfg.camera.width, self.cfg.camera.height
+        boxes = boxes_payload(detections, (w, h))
+        for row in recent:
+            classes = set(row.get("classes") or [])
+            if classes and cls not in classes:
+                continue
+            other = (row.get("features") or {}).get("boxes") or []
+            if _boxes_overlap(boxes, other):
+                return True
+        return False
 
     def _attach_spot(self, feats: dict, frame: np.ndarray, detections: list[Detection], pol) -> None:
         h, w = frame.shape[:2]
@@ -1052,7 +1194,7 @@ class Pipeline:
         pol_snap = self.pol.snapshot()
         context = {
             "camera": self.cfg.camera.name,
-            "source": str(self.cfg.camera.source),
+            "source": self._source_stored(),
             "zone": (active.features or {}).get("zone"),
             "track": {k: active.features.get(k) for k in ("track_id", "dwell_s", "path_length", "hover_score")},
             "fusion": active.fusion,
@@ -1082,18 +1224,72 @@ class Pipeline:
                 provider="error",
                 status="unavailable",
             )
+        prior = self.store.get(event_id)
+        prior_status = (prior or {}).get("operator_status") or ""
+        audit = False
+        if (
+            not verdict.alert
+            and verdict.status == "ok"
+            and active.can_page
+            and random.random() < max(0.0, min(1.0, self.cfg.vision.audit_rate))
+        ):
+            audit = True
+            self.audit_shown += 1
+        if verdict.status == "ok":
+            self._verify_ok_until = time.monotonic() + max(5.0, self.cfg.vision.verify_fresh_seconds)
+            self._verify_offline_since = None
+        else:
+            if self._verify_offline_since is None:
+                self._verify_offline_since = time.time()
+        paged_because = choose_paged_because(
+            provenance=active.provenance,
+            learning=active.learning,
+            bag=active.bag,
+            unusual=active.unusual,
+            named=active.named,
+            verify_status=verdict.status,
+            alert=verdict.alert,
+            audit=audit,
+        )
+        if prior_status in {"confirmed", "dismissed"}:
+            self.store.insert_disagreement(
+                event_id=event_id,
+                source=self._source_stored(),
+                detail=f"operator={prior_status} verdict.alert={verdict.alert}",
+            )
+            op_status = None
+            stopped = None
+            anomaly = bool((prior or {}).get("anomaly"))
+        elif audit:
+            op_status = "pending"
+            stopped = "operator"
+            anomaly = True
+        elif verdict.status != "ok" and active.can_page:
+            op_status = "unverified"
+            stopped = "operator"
+            anomaly = True
+        elif verdict.alert:
+            op_status = "pending"
+            stopped = "operator"
+            anomaly = True
+        else:
+            op_status = ""
+            stopped = "hub"
+            anomaly = False
         self.store.update_verdict(
             event_id,
             summary=verdict.summary,
-            anomaly=verdict.alert,
+            anomaly=anomaly,
             anomaly_reason=verdict.reason,
             verifier_provider=verdict.provider,
             verifier_status=verdict.status,
-            operator_status="pending" if verdict.alert else "",
-            stopped_at="operator" if verdict.alert else "hub",
+            operator_status=op_status,
+            stopped_at=stopped,
+            paged_because=paged_because,
         )
+        self._paged_counts[paged_because] = self._paged_counts.get(paged_because, 0) + 1
         self.escalation_counts["hub_handoffs"] += 1
-        if verdict.alert:
+        if anomaly and op_status == "pending" and not audit:
             self.escalation_counts["hub_alerts"] += 1
         t0 = active.t0_mono or time.monotonic()
         self.verdict_latencies_ms.append((time.monotonic() - t0) * 1000.0)
@@ -1101,17 +1297,18 @@ class Pipeline:
         with self._lock:
             self.status.verifier_provider = verdict.provider
             self.status.last_scene = verdict.summary
-            self.status.last_anomaly = verdict.reason if verdict.alert else ""
+            self.status.last_anomaly = verdict.reason if anomaly else ""
         log.info(
-            "Event %s verdict alert=%s status=%s provider=%s",
+            "Event %s verdict alert=%s status=%s provider=%s page=%s",
             event_id,
             verdict.alert,
             verdict.status,
             verdict.provider,
+            op_status,
         )
 
     def _index_embedding(self, event_id: int, active: _ActiveEvent, classes: list[str]) -> None:
-        if not self.embeddings:
+        if not self.embeddings or active.provenance != "live":
             return
         thumb = self.cfg.thumbs_dir / active.thumb_name
         if not thumb.is_file():
@@ -1121,12 +1318,12 @@ class Pipeline:
             hour = datetime.now().hour
             self.embeddings.add(
                 event_id,
-                active.source,
+                self._source_stored(),
                 vec,
                 hour,
                 classes[0] if classes else "motion",
             )
-            nov = self.embeddings.novelty(active.source, vec, k=self.cfg.embed.knn)
+            nov = self.embeddings.novelty(self._source_stored(), vec, k=self.cfg.embed.knn)
             self.store.update_verdict(
                 event_id,
                 summary=self.store.get(event_id).get("summary") or "",
@@ -1152,6 +1349,8 @@ def _handoff_payload(
     anomaly_reason: str,
     hub_detail: str,
     tracks: list | None = None,
+    now: float | None = None,
+    mode_effective: str = "recall",
 ) -> dict:
     if not has_motion:
         edge_decision = "quiet"
@@ -1165,7 +1364,8 @@ def _handoff_payload(
 
     track_bits = []
     for t in tracks or []:
-        track_bits.append(f"#{t.track_id} {t.cls} {t.dwell_s:.0f}s")
+        dwell = t.dwell_at(now) if now is not None else t.dwell_s
+        track_bits.append(f"#{t.track_id} {t.cls} {dwell:.0f}s")
     labels = ", ".join(track_bits) or (
         ", ".join(f"{d.cls} {d.conf:.2f}" for d in detections[:4]) or "unnamed"
     )
@@ -1205,8 +1405,12 @@ def _handoff_payload(
         stopped = "edge"
     else:
         if hub_needed:
-            node_detail = f"{labels} · send to Verify"
-            node_decision = "escalate"
+            if mode_effective == "recall":
+                node_detail = f"{labels} · namer (not a filter)"
+                node_decision = "named"
+            else:
+                node_detail = f"{labels} · send to Verify"
+                node_decision = "escalate"
         else:
             node_detail = f"{labels} · named and closed"
             node_decision = "closed"
@@ -1293,4 +1497,43 @@ def _handoff_payload(
             "page_operator": page_operator,
             "detail": hub_detail,
         },
+        "mode_effective": mode_effective,
     }
+
+
+def _boxes_overlap(a: list[dict], b: list[dict], min_iou: float = 0.45) -> bool:
+    if not a or not b:
+        return False
+    for left in a:
+        lx = left.get("xyxy") or []
+        if len(lx) != 4:
+            continue
+        for right in b:
+            rx = right.get("xyxy") or []
+            if len(rx) != 4:
+                continue
+            if _iou_xyxy(tuple(int(x) for x in lx), tuple(int(x) for x in rx)) >= min_iou:
+                return True
+    return False
+
+
+def _iou_xyxy(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+    if inter <= 0:
+        return 0.0
+    area_a = max(0, ax2 - ax1) * max(0, ay2 - ay1)
+    area_b = max(0, bx2 - bx1) * max(0, by2 - by1)
+    union = area_a + area_b - inter
+    return inter / union if union else 0.0
+
+
+def _percentile(values: list[float], pct: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    idx = int(round((pct / 100.0) * (len(ordered) - 1)))
+    return float(ordered[max(0, min(idx, len(ordered) - 1))])

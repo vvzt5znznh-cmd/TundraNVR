@@ -80,6 +80,7 @@ class PipelineConfig:
     detect_fps: float = 5.0
     live_fps: float = 10.0
     jpeg_quality: int = 80
+    idle_detect_seconds: float = 8.0
 
 
 @dataclass
@@ -110,9 +111,10 @@ class MonitoringConfig:
 
 @dataclass
 class TrackingConfig:
-    max_age: int = 15
+    max_age_s: float = 15.0
     min_hits: int = 2
     iou_match: float = 0.3
+    dedup_seconds: float = 8.0
 
 
 @dataclass
@@ -141,6 +143,8 @@ class VisionConfig:
     ollama_model: str = "moondream"
     openai_model: str = "gpt-4o-mini"
     timeout_seconds: float = 25.0
+    audit_rate: float = 0.03
+    verify_fresh_seconds: float = 120.0
     policy: str = (
         "Fixed building camera. Alert on unattended bags and after-hours people "
         "with no badge in the last minute. Ordinary doorway traffic is normal."
@@ -171,9 +175,13 @@ class EmbedConfig:
 
 @dataclass
 class EscalationConfig:
-    """recall = any plausible Node trip goes to Hub; pol_score = legacy PoL gate."""
+    """auto = recall while Verify is healthy, else pol_score.
 
-    mode: str = "recall"
+    recall = any plausible Detect trip goes to Verify (eval / healthy suppressor).
+    pol_score = legacy PoL gate (operational fallback when Verify is down).
+    """
+
+    mode: str = "auto"
     pol_score_min: float = 0.7
 
 
@@ -248,8 +256,8 @@ class AppConfig:
 
 
 def _escalation_mode(value: Any) -> str:
-    mode = str(value or "recall").strip().lower()
-    return mode if mode in {"recall", "pol_score"} else "recall"
+    mode = str(value or "auto").strip().lower()
+    return mode if mode in {"auto", "recall", "pol_score"} else "auto"
 
 
 def _zones(raw: list) -> list[ZoneConfig]:
@@ -308,6 +316,7 @@ def load_config(path: Path | None = None) -> AppConfig:
             detect_fps=float(pipeline_raw.get("detect_fps", 5)),
             live_fps=float(pipeline_raw.get("live_fps", 10)),
             jpeg_quality=int(pipeline_raw.get("jpeg_quality", 80)),
+            idle_detect_seconds=float(pipeline_raw.get("idle_detect_seconds", 8)),
         ),
         motion=MotionConfig(
             min_area=int(motion_raw.get("min_area", 1500)),
@@ -347,6 +356,8 @@ def load_config(path: Path | None = None) -> AppConfig:
             ollama_model=str(vision_raw.get("ollama_model", "moondream")),
             openai_model=str(vision_raw.get("openai_model", "gpt-4o-mini")),
             timeout_seconds=float(vision_raw.get("timeout_seconds", 25)),
+            audit_rate=float(vision_raw.get("audit_rate", 0.03)),
+            verify_fresh_seconds=float(vision_raw.get("verify_fresh_seconds", 120)),
             policy=str(vision_raw.get("policy") or VisionConfig.policy),
         ),
         monitoring=MonitoringConfig(
@@ -357,9 +368,10 @@ def load_config(path: Path | None = None) -> AppConfig:
             bag_person_radius=float(monitoring_raw.get("bag_person_radius", 120)),
         ),
         tracking=TrackingConfig(
-            max_age=int(tracking_raw.get("max_age", 15)),
+            max_age_s=float(tracking_raw.get("max_age_s") or tracking_raw.get("max_age") or 15),
             min_hits=int(tracking_raw.get("min_hits", 2)),
             iou_match=float(tracking_raw.get("iou_match", 0.3)),
+            dedup_seconds=float(tracking_raw.get("dedup_seconds", 8)),
         ),
         fusion=FusionConfig(
             enabled=bool(fusion_raw.get("enabled", True)),

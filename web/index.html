@@ -9,6 +9,7 @@
 <body data-page="live" data-seat="edge">
   <header class="top" id="chrome"></header>
   <main class="console">
+    <p class="banner warn" id="verifyBanner" hidden></p>
     <ol class="cascade" id="handoff"></ol>
     <div class="live-grid">
       <section class="stage">
@@ -25,6 +26,7 @@
           <span class="pill wait" id="status">Connecting</span>
           <span class="pill" id="seatPill">Edge</span>
           <span class="pill wait" id="polPill">Learning…</span>
+          <span class="pill err" id="noauthPill" hidden>NO AUTH</span>
         </div>
       </section>
       <aside class="rail" id="sceneCard">

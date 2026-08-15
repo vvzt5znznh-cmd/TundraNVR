@@ -85,7 +85,7 @@ def run_stage(stage: str, frames: list[np.ndarray], labels: dict) -> dict:
     cfg.camera.width = frames[0].shape[1]
     cfg.camera.height = frames[0].shape[0]
     cfg.events.write_media = False
-    cfg.escalation.mode = "recall"
+    cfg.escalation.mode = str(labels.get("mode") or "recall")
     cfg.vision.enabled = stage in {"verifier", "fusion", "novelty"}
     cfg.fusion.enabled = stage in {"fusion", "novelty"}
     cfg.embed.enabled = stage == "novelty"
@@ -127,12 +127,19 @@ def run_stage(stage: str, frames: list[np.ndarray], labels: dict) -> dict:
     hub_h = esc["hub_handoffs"]
     hub_a = esc["hub_alerts"]
     confirms = sum(1 for e in events if (e.get("operator_status") or "") == "confirmed")
+    health = pipe.health()
+    esc_h = health.get("escalation") or {}
+    provenances = sorted({(e.get("provenance") or "fixture") for e in events}) or ["fixture"]
     pipe.store.close()
     return {
         "stage": stage,
         "alerts": len(alerts),
         "events": len(events),
         "tracks": len(tracks),
+        "mode": cfg.escalation.mode,
+        "mode_effective": esc_h.get("mode_effective") or cfg.escalation.mode,
+        "provenance": ",".join(provenances),
+        "headline": False,
         "nar_per_cam_day": round(nar, 1),
         "alerts_per_cam_day": round(nar, 1),
         "pd_recall": round(recall, 3),
@@ -156,10 +163,20 @@ def run_stage(stage: str, frames: list[np.ndarray], labels: dict) -> dict:
     }
 
 
-def write_table(rows: list[dict], dest: Path) -> None:
+def _cell(value) -> str:
+    if value is None or value == "":
+        return "—"
+    return str(value)
+
+
+def write_table(rows: list[dict], dest: Path, *, headline_ok: bool) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     fields = [
         "stage",
+        "mode",
+        "mode_effective",
+        "provenance",
+        "headline",
         "nar_per_cam_day",
         "pd_recall",
         "far_proxy",
@@ -182,24 +199,26 @@ def write_table(rows: list[dict], dest: Path) -> None:
         writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
+    title = "# Ablation (live hold-out)" if headline_ok else "# Ablation (fixture — not headline numbers)"
     lines = [
-        "# Ablation (fixture — not headline numbers)",
+        title,
         "",
-        FIXTURE_BANNER,
+        FIXTURE_BANNER if not headline_ok else "Provenance is live. Stamp mode / mode_effective on every quoted number.",
         "",
         "IEC 62676-4 mapping: **NAR** ≈ operator alerts/camera-day; **Pd** ≈ event-level recall; "
-        "**FAR proxy** ≈ 1 − precision. Confidence Level is not estimated on this fixture.",
+        "**FAR proxy** ≈ 1 − precision. Confidence Level is not estimated here.",
         "",
-        "| Stage | NAR/cam-day | Pd (recall) | FAR proxy | Precision | P95 ms | Edge | Detect | Verify handoffs | Verify alerts | Confirms | Detect/Edge | Verify/Detect |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| Stage | Mode | Effective | Provenance | NAR/cam-day | Pd (recall) | FAR proxy | Precision | P95 ms | Edge | Detect | Verify handoffs | Verify alerts |",
+        "|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for row in rows:
         lines.append(
-            f"| {row['stage']} | {row['nar_per_cam_day']} | {row['pd_recall']} | "
-            f"{row['far_proxy']} | {row['precision']} | {row['p95_ms']} | "
+            f"| {row['stage']} | {row.get('mode')} | {row.get('mode_effective')} | "
+            f"{row.get('provenance')} | {_cell(row.get('nar_per_cam_day'))} | "
+            f"{_cell(row.get('pd_recall'))} | {_cell(row.get('far_proxy'))} | "
+            f"{_cell(row.get('precision'))} | {row['p95_ms']} | "
             f"{row['raspberry_trips']} | {row['node_proposals']} | {row['hub_handoffs']} | "
-            f"{row['hub_alerts']} | {row['operator_confirms']} | "
-            f"{row['node_per_raspberry']} | {row['hub_per_node']} |"
+            f"{row['hub_alerts']} |"
         )
     lines.append("")
     lines.append(
@@ -211,10 +230,16 @@ def write_table(rows: list[dict], dest: Path) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--smoke", action="store_true", help="Synthetic frames; CI fixture only")
+    parser.add_argument(
+        "--allow-fixture",
+        action="store_true",
+        help="Emit NAR/Pd/FAR columns for sample/fixture provenance (still not site headline)",
+    )
     parser.add_argument("--labels", type=Path, default=ROOT / "data/eval/labels.example.json")
     parser.add_argument("--out", type=Path, default=ROOT / "data/eval/ablation")
     parser.add_argument("--video", type=Path, default=None)
     args = parser.parse_args()
+    allow_fixture = bool(args.allow_fixture or args.smoke)
     labels = {}
     if args.labels.is_file():
         labels = json.loads(args.labels.read_text(encoding="utf-8"))
@@ -240,7 +265,30 @@ def main() -> int:
             file=sys.stderr,
         )
     rows = [run_stage(stage, frames, labels) for stage in STAGES]
-    write_table(rows, args.out)
+    provenances = {p for row in rows for p in str(row.get("provenance") or "fixture").split(",") if p}
+    live_only = provenances <= {"live"} and bool(provenances)
+    headline_ok = live_only and not args.smoke
+    if not headline_ok and not allow_fixture:
+        print(
+            "refusing headline NAR/Pd/FAR: provenance is not live "
+            "(pass --allow-fixture to emit fixture columns; --smoke implies --allow-fixture)",
+            file=sys.stderr,
+        )
+        for row in rows:
+            row["nar_per_cam_day"] = None
+            row["alerts_per_cam_day"] = None
+            row["pd_recall"] = None
+            row["precision"] = None
+            row["recall"] = None
+            row["far_proxy"] = None
+            row["headline"] = False
+    else:
+        for row in rows:
+            row["headline"] = bool(headline_ok)
+            if not headline_ok:
+                print(FIXTURE_BANNER, file=sys.stderr)
+                break
+    write_table(rows, args.out, headline_ok=headline_ok)
     print(args.out.with_suffix(".md").read_text(encoding="utf-8"))
     return 0
 

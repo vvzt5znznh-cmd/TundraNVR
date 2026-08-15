@@ -18,9 +18,24 @@
     gap: "not the target",
     baselineReady: "Baseline ready",
     baselineLearn: (pct) => "Learning " + pct + "%",
-    polReady: (n) => "Baseline for this camera is ready (" + n + " motion ticks).",
+    polReady: (n) => "Baseline for this camera is ready (" + n + " cells with motion).",
     polLearn: (n, need) =>
-      "Learning this camera’s usual footprint — " + n + " / " + need + " motion ticks. Edge sends every motion until then.",
+      "Learning this camera’s usual footprint — " + n + " / " + need + " cells with repeated motion. Detect still runs; Review is not paged.",
+    noAuth: "NO AUTH",
+    verifyOffline: (hhmm) => "Verify offline since " + hhmm + " — unusual traffic goes to the Unverified shelf.",
+    namerSub: "Detect names objects. It does not filter in recall mode.",
+    paged: {
+      learning: "Learning this camera",
+      sample: "Sample clip — not a live alert",
+      unusual: "Unusual for this camera",
+      named_object: "Named object",
+      rule: "Rule (unattended bag)",
+      verify_unavailable: "Unverified — Verify offline",
+      verified: "Verify alert",
+      audit: "Audit sample",
+    },
+    emptyUnverified: "No unverified events.",
+    unverified: "Unverified",
     setSource: "Set source",
     sourcePh: "RTSP URL, file path, or camera index (0)",
     switching: "Switching…",
@@ -56,11 +71,11 @@
     quietSub: "Kept on Edge. No detector.",
     unusualSub: "Upload to Detect.",
     usualSub: "Kept on Edge. No detector.",
-    learnBit: (n, need) => " Learning " + n + "/" + need + " motion ticks.",
+    learnBit: (n, need) => " Learning " + n + "/" + need + " cells.",
     nothingFrom: "Nothing from Edge",
     nothingSub: "Detector idle — usual motion never leaves Edge.",
     closedSub: "Closed here. Verify is not asked.",
-    sendHub: "Sent to Verify.",
+    sendHub: "Named — Verify decides.",
     named: "Named",
     unsure: "Unnamed",
     hubIdle: "Idle",
@@ -202,13 +217,17 @@
       .join("");
   }
 
+  function coverage(pol) {
+    const need = Number(pol.cover_need || pol.learn_samples || 16);
+    const n = Number(pol.covered_cells != null ? pol.covered_cells : pol.samples || 0);
+    const pct = Math.round((pol.progress || 0) * 100);
+    return { need, n, pct, ready: Boolean(pol.confident) };
+  }
+
   function fillLearn(data) {
     const pol = data.pol || {};
     const edge = (data.handoff || {}).edge || {};
-    const need = pol.learn_samples || 40;
-    const n = pol.samples || 0;
-    const pct = Math.round((pol.progress || 0) * 100);
-    const ready = Boolean(pol.confident);
+    const { need, n, pct, ready } = coverage(pol);
     const polPill = document.getElementById("polPill");
     if (polPill) {
       polPill.textContent = ready ? COPY.baselineReady : COPY.baselineLearn(pct);
@@ -339,9 +358,7 @@
       fillModelTable(data.models, seat);
       const pol = data.pol || {};
       const edge = (data.handoff || {}).edge || {};
-      const need = pol.learn_samples || 40;
-      const n = pol.samples || 0;
-      const pct = Math.round((pol.progress || 0) * 100);
+      const { need, n, pct } = coverage(pol);
       const tracks =
         (data.tracks || []).map((t) => "#" + t.id + " " + t.cls + " " + t.dwell_s + "s").join(", ") || "—";
       const escalate = data.escalation || {};
@@ -353,13 +370,19 @@
         ["Tracks", tracks],
         [
           "Escalation",
-          "Edge " +
+          (escalate.mode || "auto") +
+            " → " +
+            (escalate.mode_effective || "—") +
+            " · Edge " +
             (escalate.raspberry_trips || 0) +
             " → Detect " +
             (escalate.node_proposals || 0) +
             " → Verify " +
             (escalate.hub_alerts || 0),
         ],
+        ["Paged because", JSON.stringify(escalate.paged_because || {})],
+        ["Audit", (escalate.audit_shown || 0) + " shown · " + (escalate.audit_confirmed || 0) + " confirmed"],
+        ["Latency", (data.latency_ms && data.latency_ms.p50 != null ? "p50 " + data.latency_ms.p50 + " ms · p95 " + data.latency_ms.p95 + " ms" : "—") + (data.clip_drops ? " · clip drops " + data.clip_drops : "")],
         ["Camera", data.source || currentSource || "—"],
         ["Ingest", (data.fps || 0) + " fps · motion " + (data.motion_area || 0)],
       ];
@@ -376,6 +399,22 @@
         const status = document.getElementById("status");
         status.className = "pill " + (opened ? "live" : "wait");
         status.textContent = opened ? (data.fallback ? COPY.sampleLoop : COPY.live) : COPY.waiting;
+        const noauth = document.getElementById("noauthPill");
+        if (noauth) {
+          noauth.hidden = Boolean(data.auth_required);
+          noauth.className = "pill err noauth";
+          noauth.textContent = COPY.noAuth;
+        }
+        const verifyBanner = document.getElementById("verifyBanner");
+        if (verifyBanner) {
+          if (data.verify_offline_since) {
+            verifyBanner.hidden = false;
+            verifyBanner.textContent = COPY.verifyOffline(data.verify_offline_since);
+          } else {
+            verifyBanner.hidden = true;
+            verifyBanner.textContent = "";
+          }
+        }
         const nosignal = document.getElementById("nosignal");
         if (nosignal) {
           nosignal.hidden = opened;
@@ -399,8 +438,7 @@
         const node = handoff.node || {};
         const hub = handoff.hub || {};
         const pol = data.pol || {};
-        const need = pol.learn_samples || 40;
-        const n = pol.samples || 0;
+        const { need, n } = coverage(pol);
         renderCascade(document.getElementById("handoff"), handoff, setSeat);
         fillDetails(data);
         document.getElementById("sceneKicker").textContent = COPY.questions[seat];
@@ -456,7 +494,9 @@
               node.tracks && node.tracks.length
                 ? node.tracks.join(", ")
                 : dets.map((d) => d.cls).join(", ") || COPY.unsure;
-            sub.textContent = COPY.sendHub;
+            sub.textContent = (handoff.mode_effective || (data.escalation || {}).mode_effective) === "recall"
+              ? COPY.namerSub
+              : COPY.sendHub;
           }
           whyEl.textContent = "";
           objs.innerHTML = objectChips(dets);
@@ -525,9 +565,14 @@
       .catch(() => {});
 
     const rowsEl = document.getElementById("rows");
-    let alertsOnly = false;
+    let filter = "all";
     let list = [];
     let selected = null;
+
+    function pagedLabel(event) {
+      const key = event.paged_because || "";
+      return event.paged_because_label || COPY.paged[key] || key || "";
+    }
 
     function headline(event) {
       const boxes = event.boxes || [];
@@ -564,6 +609,16 @@
       return bits.filter(Boolean).join(" ");
     }
 
+    function extraChips(event) {
+      let html = "";
+      if (event.paged_because === "audit") html += `<span class="chip audit">Audit</span>`;
+      if (event.operator_status === "unverified") html += `<span class="chip">Unverified</span>`;
+      if (event.provenance === "sample" || event.provenance === "fixture") {
+        html += `<span class="chip">Sample</span>`;
+      }
+      return html;
+    }
+
     function play(event) {
       selected = event;
       rowsEl.querySelectorAll(".log-item").forEach((btn) => btn.classList.remove("active"));
@@ -598,12 +653,15 @@
             zone: event.zone,
             conf: event.score,
           }));
-      document.getElementById("eventObjects").innerHTML = objectChips(chips);
+      const pagedEl = document.getElementById("pagedBecause");
+      if (pagedEl) pagedEl.textContent = pagedLabel(event);
+      document.getElementById("eventObjects").innerHTML = objectChips(chips) + extraChips(event);
       document.getElementById("whyLine").textContent = whyText(event);
       document.getElementById("detail").textContent =
         `${fmt(event.ts_start)} · track ${event.track_id ?? "—"} · dwell ${event.dwell_s ?? "—"}s · ${(event.classes || []).join(", ") || "—"}`;
+      const isAudit = event.paged_because === "audit";
       document.getElementById("summary").textContent = [
-        event.anomaly ? COPY.alertPrefix + (event.anomaly_reason || "") : COPY.notAlert,
+        isAudit ? "" : event.anomaly ? COPY.alertPrefix + (event.anomaly_reason || "") : COPY.notAlert,
         event.summary || "",
         event.verifier_provider ? `Verifier: ${event.verifier_provider} (${event.verifier_status || "—"})` : "",
         event.novelty_score != null ? `Novelty ${Number(event.novelty_score).toFixed(2)} (ranking only).` : "",
@@ -621,25 +679,33 @@
         : COPY.reviewHint;
     }
 
+    function emptyCopy() {
+      if (filter === "alerts") return COPY.emptyAlerts;
+      if (filter === "unverified") return COPY.emptyUnverified;
+      return COPY.emptyAll;
+    }
+
     function render() {
       if (!list.length) {
-        rowsEl.innerHTML = `<p class="empty">${alertsOnly ? COPY.emptyAlerts : COPY.emptyAll}</p>`;
+        rowsEl.innerHTML = `<p class="empty">${emptyCopy()}</p>`;
         document.getElementById("detail").textContent = COPY.selectClip;
         document.getElementById("marked").hidden = true;
         document.getElementById("spotEmpty").hidden = false;
         document.getElementById("spotEmpty").textContent = COPY.selectClip;
         document.getElementById("eventObjects").innerHTML = "";
         document.getElementById("whyLine").textContent = "";
+        const pagedEl = document.getElementById("pagedBecause");
+        if (pagedEl) pagedEl.textContent = "";
         return;
       }
       rowsEl.innerHTML = list
         .map(
           (e) => `
-        <button type="button" class="log-item ${e.anomaly ? "alert" : ""}" id="evt-${e.id}">
+        <button type="button" class="log-item ${e.operator_status === "unverified" ? "unverified" : e.anomaly ? "alert" : ""}" id="evt-${e.id}">
           ${e.thumb_url ? `<img class="thumb" src="${esc(e.thumb_url)}" alt="" />` : "<span></span>"}
           <div>
-            <h3>${esc(headline(e))}</h3>
-            <p class="meta">${esc(fmt(e.ts_start))} · ${esc(stopLabel(e))}${e.track_id != null ? " · #" + e.track_id : ""}${e.dwell_s != null ? " · " + e.dwell_s + "s" : ""}</p>
+            <h3>${esc(headline(e))}${extraChips(e)}</h3>
+            <p class="meta">${esc(pagedLabel(e))} · ${esc(fmt(e.ts_start))} · ${esc(stopLabel(e))}${e.track_id != null ? " · #" + e.track_id : ""}${e.dwell_s != null ? " · " + e.dwell_s + "s" : ""}</p>
           </div>
         </button>`
         )
@@ -648,8 +714,20 @@
       play(list[0]);
     }
 
+    function setFilter(next) {
+      filter = next;
+      document.getElementById("allBtn").classList.toggle("on", filter === "all");
+      document.getElementById("alertBtn").classList.toggle("on", filter === "alerts");
+      const unverifiedBtn = document.getElementById("unverifiedBtn");
+      if (unverifiedBtn) unverifiedBtn.classList.toggle("on", filter === "unverified");
+      loadEvents();
+    }
+
     async function loadEvents() {
-      const res = await fetch("/api/events?limit=80" + (alertsOnly ? "&alerts=true" : ""));
+      let q = "/api/events?limit=80";
+      if (filter === "alerts") q += "&alerts=true";
+      if (filter === "unverified") q += "&unverified=true";
+      const res = await fetch(q);
       list = await res.json();
       render();
     }
@@ -675,18 +753,10 @@
       render();
     }
 
-    document.getElementById("allBtn").addEventListener("click", () => {
-      alertsOnly = false;
-      document.getElementById("allBtn").classList.add("on");
-      document.getElementById("alertBtn").classList.remove("on");
-      loadEvents();
-    });
-    document.getElementById("alertBtn").addEventListener("click", () => {
-      alertsOnly = true;
-      document.getElementById("alertBtn").classList.add("on");
-      document.getElementById("allBtn").classList.remove("on");
-      loadEvents();
-    });
+    document.getElementById("allBtn").addEventListener("click", () => setFilter("all"));
+    document.getElementById("alertBtn").addEventListener("click", () => setFilter("alerts"));
+    const unverifiedBtn = document.getElementById("unverifiedBtn");
+    if (unverifiedBtn) unverifiedBtn.addEventListener("click", () => setFilter("unverified"));
     document.getElementById("confirmBtn").addEventListener("click", () => review("confirm"));
     document.getElementById("dismissBtn").addEventListener("click", () => review("dismiss"));
     loadEvents();

@@ -388,7 +388,45 @@ input::placeholder { color: color-mix(in srgb, var(--muted) 80%, transparent); }
 #clipLabel { margin: 14px 0 6px; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
 #summary { margin: 12px 0 0; font-size: 14px; color: var(--ink); }
 .review { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 14px; }
-.empty { color: var(--muted); padding: 18px; margin: 0; }
+.banner {
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  font-size: 13px;
+  font-weight: 650;
+}
+.banner.warn {
+  background: color-mix(in srgb, var(--warn) 16%, var(--surface));
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--line));
+  color: var(--ink);
+}
+.banner[hidden] { display: none; }
+.pill.noauth { color: var(--alert); }
+.paged {
+  margin: 0 0 12px;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.chip {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  margin-left: 6px;
+  vertical-align: 1px;
+}
+.chip.audit {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 50%, var(--line));
+}
+.log-item.unverified { border-color: color-mix(in srgb, var(--warn) 50%, var(--line)); }
 
 @media (max-width: 900px) {
   .top { flex-wrap: wrap; padding: 10px 14px; }

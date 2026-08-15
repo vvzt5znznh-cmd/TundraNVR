@@ -12,19 +12,25 @@ from typing import Any
 
 import numpy as np
 
+from app.security import redact_source
+
 log = logging.getLogger(__name__)
 
 VIS_W = 32
 VIS_H = 18
 GRID = 8
-LEARN_GRID_N = 40  # confident = this many motion ticks on the occupancy grid
+LEARN_GRID_N = 40  # legacy tick hint; confidence is cell coverage
+COVER_MIN_HITS = 2
+COVER_NEED = 16  # of 64 cells
 SAVE_EVERY = 8
+DECAY = 0.998
 
 
 def source_key(source: str | int) -> str:
     text = str(source).strip() or "unknown"
     digest = hashlib.sha1(text.encode("utf-8")).hexdigest()[:10]
-    name = text if "://" in text else Path(text).name
+    display = redact_source(text)
+    name = display if "://" in display else Path(display).name
     safe = re.sub(r"[^a-zA-Z0-9._-]+", "_", name).strip("_")[:40] or "cam"
     return f"{safe}-{digest}"
 
@@ -87,23 +93,33 @@ class PatternOfLife:
         self.hour_n = np.zeros(168, dtype=np.int32)
         self.motion_sum = 0.0
         self.motion_n = 0
+        self.absorb_pending = 0
         self._dirty = 0
         self.directory.mkdir(parents=True, exist_ok=True)
         self._load()
 
+    def _coverage_locked(self) -> tuple[int, float, bool]:
+        covered = int(np.sum(self.grid_counts >= COVER_MIN_HITS))
+        progress = round(min(1.0, covered / max(COVER_NEED, 1)), 3)
+        return covered, progress, covered >= COVER_NEED
+
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             ticks = int(self.grid_n)
+            covered, progress, confident = self._coverage_locked()
             return {
-                "source": self.source,
+                "source": redact_source(self.source),
                 "key": self.key,
                 "samples": ticks,
                 "learn_samples": LEARN_GRID_N,
-                "progress": round(min(1.0, ticks / max(LEARN_GRID_N, 1)), 3),
-                "state": "confident" if ticks >= LEARN_GRID_N else "learning",
-                "confident": ticks >= LEARN_GRID_N,
+                "covered_cells": covered,
+                "cover_need": COVER_NEED,
+                "progress": progress,
+                "state": "confident" if confident else "learning",
+                "confident": confident,
                 "grid_n": ticks,
                 "frame_samples": self.samples,
+                "absorb_pending": self.absorb_pending,
             }
 
     def observe(
@@ -120,7 +136,8 @@ class PatternOfLife:
             occ = self._occupancy_novelty(grid) if has_motion else 0.0
             spike = self._motion_spike(motion_area) if has_motion else 0.0
             score = max(vis_delta, occ, spike)
-            learning = self.grid_n < LEARN_GRID_N
+            _, _, confident = self._coverage_locked()
+            learning = not confident
             if learning and has_motion:
                 unusual = True
                 score = max(score, 0.45)
@@ -191,8 +208,11 @@ class PatternOfLife:
             )
         return result, features
 
-    def absorb(self, features: dict[str, Any]) -> None:
-        """Operator dismissed: this observation is ordinary for the camera."""
+    def absorb(self, features: dict[str, Any], *, force: bool | None = None) -> dict[str, Any]:
+        """Operator dismissed: this observation is ordinary for the camera.
+
+        First Normal is a small shift; the second independent Normal is `force`.
+        """
         grid = np.array(features.get("grid") or np.zeros((GRID, GRID)), dtype=np.float32)
         if grid.shape != (GRID, GRID):
             grid = np.zeros((GRID, GRID), dtype=np.float32)
@@ -211,6 +231,12 @@ class PatternOfLife:
         area = int(features.get("motion_area") or 0)
         hour = int(features.get("hour") or _week_hour())
         with self._lock:
+            if force is None:
+                self.absorb_pending += 1
+                force = self.absorb_pending >= 2
+                if force:
+                    self.absorb_pending = 0
+            before = float(self.grid_counts.sum())
             if visual is None:
                 visual = self.visual_mean.copy()
             self._update_locked(
@@ -219,11 +245,22 @@ class PatternOfLife:
                 area,
                 hour,
                 unusual=False,
-                force=True,
+                force=bool(force),
                 has_motion=True,
             )
+            after = float(self.grid_counts.sum())
+            covered, progress, confident = self._coverage_locked()
             self._save_locked()
-        log.info("PoL absorbed dismissal for %s", self.key)
+        delta = after - before
+        log.info("PoL absorbed dismissal for %s force=%s delta=%.3f", self.key, force, delta)
+        return {
+            "force": bool(force),
+            "delta": round(delta, 4),
+            "absorb_pending": self.absorb_pending,
+            "covered_cells": covered,
+            "progress": progress,
+            "confident": confident,
+        }
 
     def close(self) -> None:
         with self._lock:
@@ -288,7 +325,8 @@ class PatternOfLife:
             self.motion_sum += area
             self.motion_n += 1
             cell = np.clip(grid, 0.0, 1.0)
-            learning = self.grid_n < LEARN_GRID_N
+            _, _, confident = self._coverage_locked()
+            learning = not confident
             if force or learning or not unusual:
                 self.grid_counts += cell
                 self.grid_n += 1.0
@@ -296,6 +334,8 @@ class PatternOfLife:
                 # Repeating "unusual" motion must still be able to become usual.
                 self.grid_counts += 0.12 * cell
                 self.grid_n += 0.12
+            if confident and not force:
+                self.grid_counts *= DECAY
         self.samples += 1
         self._dirty += 1
         if force or self._dirty >= SAVE_EVERY:
@@ -327,11 +367,12 @@ class PatternOfLife:
             self.hour_n = np.zeros(168, dtype=np.int32)
         self.motion_sum = float(data.get("motion_sum") or 0.0)
         self.motion_n = int(data.get("motion_n") or 0)
+        self.absorb_pending = int(data.get("absorb_pending") or 0)
         log.info("Loaded PoL %s samples=%s", self.key, self.samples)
 
     def _save_locked(self) -> None:
         payload = {
-            "source": self.source,
+            "source": redact_source(self.source),
             "key": self.key,
             "samples": self.samples,
             "grid_n": self.grid_n,
@@ -341,6 +382,7 @@ class PatternOfLife:
             "hour_n": self.hour_n.tolist(),
             "motion_sum": round(self.motion_sum, 1),
             "motion_n": self.motion_n,
+            "absorb_pending": self.absorb_pending,
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         tmp = self.path.with_suffix(".tmp")
