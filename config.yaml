@@ -18,7 +18,7 @@ motion:
 
 detection:
   model: yolov8n.pt
-    conf: 0.5
+  conf: 0.5
   classes:
     - person
     - bicycle
