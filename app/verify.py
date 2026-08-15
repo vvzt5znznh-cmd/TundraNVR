@@ -74,7 +74,7 @@ def build_prompt(*, context: dict, policy: str, classes: list[str]) -> str:
         '{"alert": true or false, "category": "normal|unattended_object|after_hours|intrusion|other",'
         ' "confidence": 0.0-1.0, "reason": "one sentence", "evidence_marks": [1],'
         ' "caption": "search sentence"}\n'
-        f"Policy:\n{policy.strip() or 'Alert on unattended bags and after-hours people without a badge.'}\n"
+        f"Policy:\n{policy.strip() or 'Alert on unattended bags and after-hours people. Ordinary doorway traffic is normal.'}\n"
         f"Named classes: {', '.join(classes) or 'none'}\n"
         f"Context: {ctx}\n"
     )

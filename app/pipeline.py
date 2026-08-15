@@ -238,7 +238,7 @@ class Pipeline:
         self._situation: list[str] = []
         self._seen_track_ids: set[int] = set()
         self.escalation_counts = {
-            "raspberry_trips": 0,
+            "edge_trips": 0,
             "node_proposals": 0,
             "hub_handoffs": 0,
             "hub_alerts": 0,
@@ -276,7 +276,7 @@ class Pipeline:
     def latest_jpeg(self, seat: str = "node") -> bytes:
         with self._lock:
             key = (seat or "node").lower()
-            if key in {"edge", "raspberry"}:
+            if key == "edge":
                 return self._jpeg_edge or self._latest_jpeg
             if key == "hub":
                 return self._jpeg_hub or self._latest_jpeg
@@ -295,7 +295,7 @@ class Pipeline:
                 }
                 for t in self._live_tracks
             ]
-            rasp = self.escalation_counts["raspberry_trips"]
+            edge = self.escalation_counts["edge_trips"]
             node = self.escalation_counts["node_proposals"]
             hub_h = self.escalation_counts["hub_handoffs"]
             hub_a = self.escalation_counts["hub_alerts"]
@@ -332,12 +332,12 @@ class Pipeline:
                 "escalation": {
                     "mode": mode_cfg,
                     "mode_effective": mode_eff,
-                    "raspberry_trips": rasp,
+                    "edge_trips": edge,
                     "node_proposals": node,
                     "hub_handoffs": hub_h,
                     "hub_alerts": hub_a,
                     "operator_confirms": confirms,
-                    "node_per_raspberry": round(node / rasp, 3) if rasp else 0.0,
+                    "node_per_edge": round(node / edge, 3) if edge else 0.0,
                     "hub_per_node": round(hub_h / node, 3) if node else 0.0,
                     "alerts_per_hub": round(hub_a / hub_h, 3) if hub_h else 0.0,
                     "paged_because": dict(self._paged_counts),
@@ -703,7 +703,6 @@ class Pipeline:
             )
         node_received = run_detect
         named = bool(tracks) or bool(detections)
-        no_badge = bool(fusion and not fusion.badge_within_window)
         decision = decide_hub(
             mode=self.cfg.escalation.mode,
             node_received=node_received,
@@ -712,7 +711,6 @@ class Pipeline:
             pol_confident=pol.confident,
             pol_score=pol.score,
             pol_min=self.cfg.escalation.pol_score_min,
-            no_badge=no_badge,
             verify_healthy=self._verify_healthy(),
         )
         hub_needed = decision.hub_needed and can_page
@@ -720,7 +718,7 @@ class Pipeline:
         page_operator = hub_needed and can_page
         anomaly_reason = decision.reason if page_operator else ""
         if run_detect and edge_trip:
-            self.escalation_counts["raspberry_trips"] += 1
+            self.escalation_counts["edge_trips"] += 1
         peak = max((d.conf for d in detections), default=0.0)
         labels = sorted({t.cls for t in tracks} | {d.cls for d in detections})
         hub_detail = fallback_summary(labels, peak, anomaly_reason) if hub_needed else ""

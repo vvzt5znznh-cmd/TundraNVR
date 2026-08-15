@@ -29,28 +29,7 @@ BUILDING_CLASSES = [
     "suitcase",
     "umbrella",
     "skateboard",
-    "airplane",
-    "drone",
 ]
-
-EXPECTED_CLASSES = [
-    "person",
-    "bicycle",
-    "car",
-    "motorcycle",
-    "bus",
-    "truck",
-    "backpack",
-    "handbag",
-    "suitcase",
-    "umbrella",
-    "dog",
-    "cat",
-    "bird",
-    "skateboard",
-]
-
-ALERT_CLASSES = ["drone", "airplane"]
 
 
 class SettingsError(ValueError):
@@ -96,14 +75,10 @@ class DetectionConfig:
     conf: float = 0.4
     classes: list[str] = field(default_factory=lambda: list(BUILDING_CLASSES))
     device: str = "cpu"
-    drone_model: str = ""
-    drone_conf: float = 0.55
 
 
 @dataclass
 class MonitoringConfig:
-    expected_classes: list[str] = field(default_factory=lambda: list(EXPECTED_CLASSES))
-    alert_classes: list[str] = field(default_factory=lambda: list(ALERT_CLASSES))
     unattended_bags: bool = True
     bag_dwell_seconds: float = 8.0
     bag_person_radius: float = 120.0
@@ -146,14 +121,14 @@ class VisionConfig:
     audit_rate: float = 0.03
     verify_fresh_seconds: float = 120.0
     policy: str = (
-        "Fixed building camera. Alert on unattended bags and after-hours people "
-        "with no badge in the last minute. Ordinary doorway traffic is normal."
+        "Fixed building camera. Alert on unattended bags and after-hours people. "
+        "Ordinary doorway traffic is normal."
     )
 
 
 @dataclass
 class FusionConfig:
-    enabled: bool = True
+    enabled: bool = False
     badge_window_seconds: float = 60.0
     fixture: str = "data/fusion/badges.jsonl"
 
@@ -168,9 +143,8 @@ class MqttSettings:
 
 @dataclass
 class EmbedConfig:
-    enabled: bool = True
+    enabled: bool = False
     knn: int = 5
-    gate_alerts: bool = False
 
 
 @dataclass
@@ -190,8 +164,8 @@ class TargetModels:
     """Roadmap model at each seat vs what this process actually loads."""
 
     edge: str = "OpenCV + Pattern of Life (no neural net)"
-    node: str = "RF-DETR"
-    hub: str = "Moondream 3"
+    node: str = "YOLOv8n"
+    hub: str = "Moondream"
 
 
 @dataclass
@@ -328,8 +302,6 @@ def load_config(path: Path | None = None) -> AppConfig:
             conf=float(detection_raw.get("conf", 0.4)),
             classes=list(detection_raw.get("classes") or BUILDING_CLASSES),
             device=str(detection_raw.get("device", "cpu")),
-            drone_model=str(detection_raw.get("drone_model") or ""),
-            drone_conf=float(detection_raw.get("drone_conf", 0.55)),
         ),
         events=EventsConfig(
             pre_seconds=float(events_raw.get("pre_seconds", 2)),
@@ -361,8 +333,6 @@ def load_config(path: Path | None = None) -> AppConfig:
             policy=str(vision_raw.get("policy") or VisionConfig.policy),
         ),
         monitoring=MonitoringConfig(
-            expected_classes=list(monitoring_raw.get("expected_classes") or EXPECTED_CLASSES),
-            alert_classes=list(monitoring_raw.get("alert_classes") or ALERT_CLASSES),
             unattended_bags=bool(monitoring_raw.get("unattended_bags", True)),
             bag_dwell_seconds=float(monitoring_raw.get("bag_dwell_seconds", 8)),
             bag_person_radius=float(monitoring_raw.get("bag_person_radius", 120)),
@@ -374,7 +344,7 @@ def load_config(path: Path | None = None) -> AppConfig:
             dedup_seconds=float(tracking_raw.get("dedup_seconds", 8)),
         ),
         fusion=FusionConfig(
-            enabled=bool(fusion_raw.get("enabled", True)),
+            enabled=bool(fusion_raw.get("enabled", False)),
             badge_window_seconds=float(fusion_raw.get("badge_window_seconds", 60)),
             fixture=str(fusion_raw.get("fixture") or "data/fusion/badges.jsonl"),
         ),
@@ -385,9 +355,8 @@ def load_config(path: Path | None = None) -> AppConfig:
             prefix=str(mqtt_raw.get("prefix") or "tundranvr"),
         ),
         embed=EmbedConfig(
-            enabled=bool(embed_raw.get("enabled", True)),
+            enabled=bool(embed_raw.get("enabled", False)),
             knn=int(embed_raw.get("knn", 5)),
-            gate_alerts=bool(embed_raw.get("gate_alerts", False)),
         ),
         escalation=EscalationConfig(
             mode=_escalation_mode(escalation_raw.get("mode")),

@@ -74,7 +74,6 @@ class ObjectDetector:
         self.model_name = model
         self.conf = conf
         self.allowed = {normalize_class(name) for name in (classes or ["person", "car", "dog", "cat"])}
-        self.allowed.add("drone")
         self.device = device
         self._model = None
         self._names: dict[int, str] = {}
