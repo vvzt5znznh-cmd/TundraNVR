@@ -16,7 +16,8 @@ from app.config import (
     public_settings,
     save_runtime_settings,
 )
-from app.page import choose_paged_because, label as paged_label
+from app.page import label as paged_label
+from app.pipeline import Pipeline
 from app.security import redact_source
 from app.version import VERSION, version_payload
 
