@@ -35,6 +35,8 @@
       " cells sketched. That is not a site baseline. Review is not paged.",
     noAuth: "NO AUTH",
     verifyOffline: (hhmm) => "Verify offline since " + hhmm + " — unusual traffic goes to the Unverified shelf.",
+    verifyOfflineDemo: (hhmm) =>
+      "Verify offline since " + hhmm + ". This is a demo file — Review is not paged.",
     namerSub: "Detect names objects. It does not filter in recall mode.",
     paged: {
       learning: "Motion map still filling",
@@ -258,8 +260,14 @@
     if (kicker) {
       kicker.textContent = demo ? "Demo motion map" : ready ? "Motion map" : "Sketching this view";
     }
-    renderHeat(document.getElementById("heat"), edge.grid, edge.usual_grid);
-    renderMeters(document.getElementById("whyMeters"), edge);
+    const heat = document.getElementById("heat");
+    const meters = document.getElementById("whyMeters");
+    if (heat) heat.hidden = demo;
+    if (meters) meters.hidden = demo;
+    if (!demo) {
+      renderHeat(heat, edge.grid, edge.usual_grid);
+      renderMeters(meters, edge);
+    }
   }
 
   function objectChips(items, limit) {
@@ -442,7 +450,9 @@
         if (verifyBanner) {
           if (data.verify_offline_since) {
             verifyBanner.hidden = false;
-            verifyBanner.textContent = COPY.verifyOffline(data.verify_offline_since);
+            verifyBanner.textContent = data.fallback
+              ? COPY.verifyOfflineDemo(data.verify_offline_since)
+              : COPY.verifyOffline(data.verify_offline_since);
           } else {
             verifyBanner.hidden = true;
             verifyBanner.textContent = "";

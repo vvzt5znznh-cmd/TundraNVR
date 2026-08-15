@@ -200,9 +200,8 @@ body[data-page="events"] .console {
 .cascade button.step.escalate,
 .cascade button.step.alert,
 .cascade button.step.needed { background: var(--alert-dim); border-color: color-mix(in srgb, var(--alert) 45%, var(--line)); }
-.cascade button.step.usual,
-.cascade button.step.closed,
-.cascade button.step.log { background: var(--accent-dim); }
+.cascade button.step.demo,
+.cascade button.step.named { background: var(--accent-dim); }
 .cascade button.step.skipped,
 .cascade button.step.quiet { opacity: 0.55; }
 .cascade button.step b, .cascade .step b {
@@ -290,6 +289,10 @@ body[data-page="events"] .console {
   flex: 1 1 240px;
   margin: 0;
   padding: 8px 12px;
+}
+.status-strip .presets {
+  flex: 1 1 100%;
+  margin: 0;
 }
 .pill {
   background: rgba(20, 24, 29, 0.88);

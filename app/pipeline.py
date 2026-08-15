@@ -359,7 +359,7 @@ class Pipeline:
                     edge_active=self.status.last_motion,
                 ),
                 "auth_required": bool(self.cfg.server.api_token),
-                "fallback": self._fallback,
+                "fallback": self._demo(),
             }
 
     def _verify_healthy(self) -> bool:
@@ -368,10 +368,13 @@ class Pipeline:
     def _source_stored(self) -> str:
         return redact_source(self.cfg.camera.source)
 
+    def _demo(self) -> bool:
+        return bool(self._fallback or self._source_is_file(self._active_source))
+
     def _provenance(self) -> str:
         if self._ingest_kind == "fixture":
             return "fixture"
-        if self._fallback:
+        if self._demo():
             return "sample"
         return "live"
 
@@ -475,7 +478,7 @@ class Pipeline:
         cap = self._try_open(source)
         if cap is not None:
             self._active_source = source
-            self._file_loop = self._source_is_file(source) and bool(self.cfg.camera.loop_file)
+            self._file_loop = self._source_is_file(source)
             self._fallback = False
             with self._lock:
                 self.status.source = str(source)
@@ -651,7 +654,7 @@ class Pipeline:
         fusion = self.fusion.snapshot(now) if self.cfg.fusion.enabled else None
         fusion_d = fusion.as_dict() if fusion else {}
 
-        edge_trip = has_motion and (pol.unusual or not pol.confident or self._fallback)
+        edge_trip = has_motion and (pol.unusual or not pol.confident or self._demo())
         idle_s = max(1.0, float(self.cfg.pipeline.idle_detect_seconds))
         idle_due = (now - self._last_idle_detect) >= idle_s
         run_detect = bool(edge_trip or idle_due)
@@ -739,6 +742,7 @@ class Pipeline:
             tracks=tracks,
             now=now,
             mode_effective=mode_eff,
+            demo=self._demo(),
         )
         stopped = handoff["stopped_at"]
         self._yolo_ran = yolo_ran
@@ -1161,7 +1165,7 @@ class Pipeline:
         feats["frame"] = {"w": int(w), "h": int(h)}
         feats["boxes"] = boxes_payload(detections, (w, h))
         detail = getattr(pol, "why", "") or pol.reason
-        if self._fallback:
+        if self._demo():
             extra = (
                 "This host is looping a short demo file. The 16-cell motion sketch "
                 "fills in seconds; that is not a Pattern of Life. Review is not paged."
@@ -1176,7 +1180,7 @@ class Pipeline:
             "visual_delta": round(float(pol.visual_delta), 3),
             "motion_spike": round(float(pol.motion_spike), 3),
             "learning": not bool(pol.confident),
-            "fallback": bool(self._fallback),
+            "fallback": bool(self._demo()),
             "samples": int(pol.samples),
         }
 
@@ -1371,8 +1375,16 @@ def _handoff_payload(
     tracks: list | None = None,
     now: float | None = None,
     mode_effective: str = "recall",
+    demo: bool = False,
 ) -> dict:
-    if not has_motion:
+    if demo:
+        if not has_motion:
+            edge_decision = "quiet"
+            edge_detail = "no motion"
+        else:
+            edge_decision = "demo"
+            edge_detail = "Looping demo file — not a live camera"
+    elif not has_motion:
         edge_decision = "quiet"
         edge_detail = "no motion"
     elif pol.unusual or not pol.confident:
@@ -1419,7 +1431,7 @@ def _handoff_payload(
                 "stage": "operator",
                 "label": SEAT_LABELS["operator"],
                 "decision": "skipped",
-                "detail": "",
+                "detail": "Demo does not page Review" if demo else "",
             }
         )
         stopped = "edge"
@@ -1432,8 +1444,8 @@ def _handoff_payload(
                 node_detail = f"{labels} · send to Verify"
                 node_decision = "escalate"
         else:
-            node_detail = f"{labels} · named and closed"
-            node_decision = "closed"
+            node_detail = f"{labels} · named" + (" · demo" if demo else " and closed")
+            node_decision = "named" if demo else "closed"
         steps.append(
             {
                 "stage": "node",
@@ -1478,7 +1490,7 @@ def _handoff_payload(
                     "stage": "hub",
                     "label": SEAT_LABELS["hub"],
                     "decision": "skipped",
-                    "detail": "Detect closed this",
+                    "detail": "Demo does not page Review" if demo else "Detect closed this",
                 }
             )
             steps.append(
@@ -1486,7 +1498,7 @@ def _handoff_payload(
                     "stage": "operator",
                     "label": SEAT_LABELS["operator"],
                     "decision": "skipped",
-                    "detail": "",
+                    "detail": "Demo does not page Review" if demo else "",
                 }
             )
             stopped = "node"
