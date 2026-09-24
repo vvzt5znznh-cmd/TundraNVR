@@ -21,6 +21,7 @@ from app.detect_filters import (
     focus_detections,
     idle_seed_detections,
     motion_gate_detections,
+    spot_quality,
 )
 from app.embed import EmbeddingIndex, thumb_hist
 from app.escalate import decide_hub, effective_mode
@@ -107,6 +108,7 @@ class _ActiveEvent:
     track_id: int | None = None
     last_frame: np.ndarray | None = None
     last_dets: list[Detection] = field(default_factory=list)
+    spot_quality: float = 0.0
     fusion: dict = field(default_factory=dict)
     t0_mono: float = 0.0
     provenance: str = "live"
@@ -951,12 +953,23 @@ class Pipeline:
                 existing.anomaly_reason = kwargs["anomaly_reason"]
             existing.pol_score = max(existing.pol_score, kwargs["pol_score"])
             existing.handoff = kwargs["handoff"]
-            existing.features = self._stamp_event_boxes(kwargs["features"], detections, frame)
-            existing.last_frame = frame.copy()
-            existing.last_dets = detections
             existing.fusion = kwargs.get("fusion") or {}
             existing.can_page = existing.can_page or kwargs.get("can_page", False)
             existing.bag = existing.bag or kwargs.get("bag", False)
+            # Keep the best Review spot — not the exit-edge sliver of a leaving car.
+            h, w = frame.shape[:2]
+            quality = spot_quality(detections, (w, h))
+            if quality + 1e-6 >= existing.spot_quality:
+                existing.spot_quality = quality
+                existing.last_frame = frame.copy()
+                existing.last_dets = detections
+                existing.features = self._stamp_event_boxes(kwargs["features"], detections, frame)
+            else:
+                # Still refresh non-box features (dwell / why) without clobbering the spot.
+                feats = dict(kwargs["features"] or {})
+                feats["boxes"] = (existing.features or {}).get("boxes") or feats.get("boxes")
+                feats["frame"] = (existing.features or {}).get("frame") or feats.get("frame")
+                existing.features = feats
             return
         if self._is_dup(tr.cls, detections, now):
             return
@@ -1058,6 +1071,7 @@ class Pipeline:
             track_id=track_id,
             last_frame=frame.copy(),
             last_dets=list(detections),
+            spot_quality=spot_quality(detections, (frame.shape[1], frame.shape[0])),
             fusion=fusion or {},
             t0_mono=time.monotonic(),
             provenance=provenance,

@@ -272,3 +272,40 @@ def focus_detections(
         want.add(int(track_id))
     focused = [d for d in detections if d.track_id is not None and int(d.track_id) in want]
     return focused if focused else list(detections)
+
+
+def spot_quality(
+    detections: list[Detection],
+    frame_wh: tuple[int, int],
+) -> float:
+    """Score a frame for Review thumbs — prefer large, centered, confident boxes.
+
+    Exiting vehicles leave a thin edge sliver that looks like empty pavement on
+    the event card; keep the best mid-track frame instead of the last one.
+    """
+    if not detections:
+        return 0.0
+    frame_w, frame_h = max(int(frame_wh[0]), 1), max(int(frame_wh[1]), 1)
+    best = 0.0
+    for det in detections:
+        x1, y1, x2, y2 = (int(v) for v in det.xyxy)
+        bw, bh = max(0, x2 - x1), max(0, y2 - y1)
+        if bw <= 0 or bh <= 0:
+            continue
+        area = (bw * bh) / float(frame_w * frame_h)
+        cx = (x1 + x2) / 2.0 / frame_w
+        cy = (y1 + y2) / 2.0 / frame_h
+        edge_dist = min(cx, 1.0 - cx, cy, 1.0 - cy)
+        # Thin edge-glued slabs score near zero even at high conf.
+        thin_edge = (x1 <= 2 or x2 >= frame_w - 2) and bw <= int(frame_w * 0.14)
+        if thin_edge:
+            continue
+        score = (
+            float(det.conf)
+            * (0.3 + 0.7 * min(area * 10.0, 1.0))
+            * (0.35 + 0.65 * min(edge_dist / 0.12, 1.0))
+        )
+        if score > best:
+            best = score
+    return best
+
