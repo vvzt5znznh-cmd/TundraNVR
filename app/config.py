@@ -93,11 +93,31 @@ class MotionConfig:
 @dataclass
 class DetectionConfig:
     model: str = "yolov8n.pt"
-    conf: float = 0.4
+    # Floor for YOLO predict; class_conf may raise per-label floors after predict.
+    conf: float = 0.45
     classes: list[str] = field(default_factory=lambda: list(BUILDING_CLASSES))
     device: str = "cpu"
     drone_model: str = ""
     drone_conf: float = 0.55
+    # Drop tiny / edge-glued / absurd-aspect boxes (parking-line ghosts).
+    min_box_area_frac: float = 0.0012
+    min_side_px: int = 24
+    edge_margin_frac: float = 0.02
+    edge_reject: bool = True
+    class_conf: dict[str, float] = field(
+        default_factory=lambda: {
+            "car": 0.55,
+            "truck": 0.55,
+            "bus": 0.55,
+            "motorcycle": 0.5,
+            "bicycle": 0.5,
+            "person": 0.45,
+            "airplane": 0.55,
+            "drone": 0.55,
+        }
+    )
+    # Review thumbs / event box lists prefer the trip track, not every coincident FP.
+    primary_track_boxes: bool = True
 
 
 @dataclass
@@ -112,7 +132,7 @@ class MonitoringConfig:
 @dataclass
 class TrackingConfig:
     max_age_s: float = 15.0
-    min_hits: int = 2
+    min_hits: int = 3
     iou_match: float = 0.3
     dedup_seconds: float = 8.0
 
@@ -325,11 +345,32 @@ def load_config(path: Path | None = None) -> AppConfig:
         ),
         detection=DetectionConfig(
             model=str(detection_raw.get("model", "yolov8n.pt")),
-            conf=float(detection_raw.get("conf", 0.4)),
+            conf=float(detection_raw.get("conf", 0.45)),
             classes=list(detection_raw.get("classes") or BUILDING_CLASSES),
             device=str(detection_raw.get("device", "cpu")),
             drone_model=str(detection_raw.get("drone_model") or ""),
             drone_conf=float(detection_raw.get("drone_conf", 0.55)),
+            min_box_area_frac=float(detection_raw.get("min_box_area_frac", 0.0012)),
+            min_side_px=int(detection_raw.get("min_side_px", 24)),
+            edge_margin_frac=float(detection_raw.get("edge_margin_frac", 0.02)),
+            edge_reject=bool(detection_raw.get("edge_reject", True)),
+            class_conf={
+                str(k): float(v)
+                for k, v in (
+                    detection_raw.get("class_conf")
+                    or {
+                        "car": 0.55,
+                        "truck": 0.55,
+                        "bus": 0.55,
+                        "motorcycle": 0.5,
+                        "bicycle": 0.5,
+                        "person": 0.45,
+                        "airplane": 0.55,
+                        "drone": 0.55,
+                    }
+                ).items()
+            },
+            primary_track_boxes=bool(detection_raw.get("primary_track_boxes", True)),
         ),
         events=EventsConfig(
             pre_seconds=float(events_raw.get("pre_seconds", 2)),
@@ -369,7 +410,7 @@ def load_config(path: Path | None = None) -> AppConfig:
         ),
         tracking=TrackingConfig(
             max_age_s=float(tracking_raw.get("max_age_s") or tracking_raw.get("max_age") or 15),
-            min_hits=int(tracking_raw.get("min_hits", 2)),
+            min_hits=int(tracking_raw.get("min_hits", 3)),
             iou_match=float(tracking_raw.get("iou_match", 0.3)),
             dedup_seconds=float(tracking_raw.get("dedup_seconds", 8)),
         ),

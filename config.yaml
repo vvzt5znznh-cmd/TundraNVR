@@ -18,7 +18,24 @@ motion:
 
 detection:
   model: yolov8n.pt
-  conf: 0.4
+  # YOLO predict floor; class_conf raises vehicle floors after predict.
+  conf: 0.45
+  # Drop parking-line / shadow / frame-edge ghosts before tracking.
+  min_box_area_frac: 0.0012
+  min_side_px: 24
+  edge_margin_frac: 0.02
+  edge_reject: true
+  class_conf:
+    car: 0.55
+    truck: 0.55
+    bus: 0.55
+    motorcycle: 0.5
+    bicycle: 0.5
+    person: 0.45
+    airplane: 0.55
+    drone: 0.55
+  # Review cards label the trip track, not every coincident FP in the frame.
+  primary_track_boxes: true
   classes:
     - person
     - bicycle
@@ -41,7 +58,8 @@ detection:
 tracking:
   # Wall-clock seconds since last Detect observe. Was tick-count `max_age`.
   max_age_s: 15
-  min_hits: 2
+  # Need a second confirm before naming — cuts one-frame pavement ghosts.
+  min_hits: 3
   iou_match: 0.3
   dedup_seconds: 8
 

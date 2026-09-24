@@ -15,6 +15,12 @@ import numpy as np
 from app.config import AppConfig
 from app.db import EventStore, utc_now
 from app.detect import Detection, ObjectDetector, boxes_payload, draw_overlay
+from app.detect_filters import (
+    BoxFilterConfig,
+    filter_detections,
+    focus_detections,
+    idle_seed_detections,
+)
 from app.embed import EmbeddingIndex, thumb_hist
 from app.escalate import decide_hub, effective_mode
 from app.fusion import FusionBus, clock_context
@@ -156,6 +162,14 @@ class Pipeline:
             conf=cfg.detection.conf,
             classes=cfg.detection.classes,
             device=cfg.detection.device,
+        )
+        self._box_filter = BoxFilterConfig(
+            conf=cfg.detection.conf,
+            class_conf=dict(cfg.detection.class_conf or {}),
+            min_box_area_frac=cfg.detection.min_box_area_frac,
+            min_side_px=cfg.detection.min_side_px,
+            edge_margin_frac=cfg.detection.edge_margin_frac,
+            edge_reject=cfg.detection.edge_reject,
         )
         self.tracker = ByteTracker(
             max_age=cfg.tracking.max_age_s,
@@ -671,6 +685,15 @@ class Pipeline:
                 with self._lock:
                     self.status.last_error = f"detect: {exc}"
             h, w = frame.shape[:2]
+            detections = filter_detections(detections, (w, h), self._box_filter)
+            if not edge_trip:
+                # Idle sweep keeps still bags/people; do not seed vehicle pavement FPs.
+                existing = [tr.xyxy for tr in self.tracker.tracks.values()]
+                detections = idle_seed_detections(
+                    detections,
+                    existing,
+                    iou_match=float(self.cfg.tracking.iou_match),
+                )
             tracks = self.tracker.update(
                 detections,
                 now,
@@ -794,7 +817,7 @@ class Pipeline:
                     self._touch_track_event(
                         frame,
                         tr,
-                        overlay_dets,
+                        self._event_label_dets(overlay_dets, tr.track_id),
                         now,
                         hub_needed=need,
                         page_operator=need and can_page,
@@ -850,6 +873,37 @@ class Pipeline:
                 self.status.last_handoff = handoff
         _ = live_ids
 
+    def _event_label_dets(
+        self,
+        detections: list[Detection],
+        track_id: int | None,
+    ) -> list[Detection]:
+        """Boxes drawn on Review thumbs / stored on the event.
+
+        Live Detect/Verify overlays still show all confirmed tracks; Review cards
+        prefer the trip/primary track so coincident pavement FPs do not pile on.
+        """
+        if not self.cfg.detection.primary_track_boxes:
+            return list(detections)
+        return focus_detections(detections, track_id)
+
+    def _stamp_event_boxes(
+        self,
+        features: dict,
+        detections: list[Detection],
+        frame: np.ndarray | None = None,
+    ) -> dict:
+        feats = dict(features or {})
+        if frame is not None:
+            h, w = frame.shape[:2]
+        else:
+            frame_meta = feats.get("frame") or {}
+            w = int(frame_meta.get("w") or self.cfg.camera.width or 1280)
+            h = int(frame_meta.get("h") or self.cfg.camera.height or 720)
+        feats["frame"] = {"w": int(w), "h": int(h)}
+        feats["boxes"] = boxes_payload(detections, (w, h))
+        return feats
+
     def _persist_track(self, tr: Track, frame_h: int, now: float | None = None) -> None:
         feat = tr.features(frame_h, now)
         self.store.upsert_track(
@@ -893,7 +947,7 @@ class Pipeline:
                 existing.anomaly_reason = kwargs["anomaly_reason"]
             existing.pol_score = max(existing.pol_score, kwargs["pol_score"])
             existing.handoff = kwargs["handoff"]
-            existing.features = kwargs["features"]
+            existing.features = self._stamp_event_boxes(kwargs["features"], detections, frame)
             existing.last_frame = frame.copy()
             existing.last_dets = detections
             existing.fusion = kwargs.get("fusion") or {}
@@ -995,7 +1049,7 @@ class Pipeline:
             pol_score=pol_score,
             stopped_at=stopped_at,
             handoff=handoff,
-            features=features,
+            features=self._stamp_event_boxes(features, detections, frame),
             source=self._source_stored(),
             track_id=track_id,
             last_frame=frame.copy(),
