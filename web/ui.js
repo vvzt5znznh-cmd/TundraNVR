@@ -635,8 +635,14 @@
 
     function headline(event) {
       const boxes = event.boxes || [];
-      if (boxes.length) {
-        return boxes
+      const primary = event.track_id;
+      const focused =
+        primary != null && boxes.length
+          ? boxes.filter((b) => b.track_id == null || Number(b.track_id) === Number(primary))
+          : boxes;
+      const shown = focused.length ? focused : boxes;
+      if (shown.length) {
+        return shown
           .map((b) => (b.track_id != null ? "#" + b.track_id + " " : "") + (b.cls || "object"))
           .join(", ");
       }
@@ -703,8 +709,14 @@
         spotEmpty.textContent = COPY.noMark;
       }
       const boxes = event.boxes || [];
-      const chips = boxes.length
-        ? boxes
+      const primary = event.track_id;
+      const focused =
+        primary != null && boxes.length
+          ? boxes.filter((b) => b.track_id == null || Number(b.track_id) === Number(primary))
+          : boxes;
+      const labelBoxes = focused.length ? focused : boxes;
+      const chips = labelBoxes.length
+        ? labelBoxes
         : (event.classes || []).map((cls) => ({
             cls,
             track_id: event.track_id,
