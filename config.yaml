@@ -37,6 +37,10 @@ detection:
     - airplane
     - drone
   device: cpu
+  # Stock YOLOv8n has no drone class. Secondary UAV weights from
+  # scripts/download_sample.py (drone-yolo.pt). Empty = skip.
+  drone_model: drone-yolo.pt
+  drone_conf: 0.55
 
 tracking:
   # Wall-clock seconds since last Detect observe. Was tick-count `max_age`.
@@ -67,6 +71,13 @@ escalation:
   # pol_score: legacy gate on Pattern of Life score ≥ pol_score_min.
   mode: auto
   pol_score_min: 0.7
+
+# Showcase demos only. Sample/fixture never absorb into Pattern of Life.
+# When page_review is true, allowlisted clips (lobby / package / courtyard /
+# drones — see app/samples.py) may page Review after the session sketch is
+# confident. Default false keeps anonymous looping files off the operator shelf.
+demo:
+  page_review: false
 
 # Roadmap model at each seat. `running` in /health is what this process loads.
 targets:

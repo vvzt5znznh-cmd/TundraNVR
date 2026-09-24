@@ -186,6 +186,18 @@ class EscalationConfig:
 
 
 @dataclass
+class DemoConfig:
+    """Showcase sample Review paging (opt-in).
+
+    Sample/fixture provenance never absorbs into Pattern of Life.
+    When ``page_review`` is true, clips marked page_review in app.samples
+    may page Review after the session motion sketch is confident.
+    """
+
+    page_review: bool = False
+
+
+@dataclass
 class TargetModels:
     """Roadmap model at each seat vs what this process actually loads."""
 
@@ -216,6 +228,7 @@ class AppConfig:
     embed: EmbedConfig
     escalation: EscalationConfig
     targets: TargetModels
+    demo: DemoConfig = field(default_factory=DemoConfig)
     zones: list[ZoneConfig] = field(default_factory=list)
     root: Path = ROOT
 
@@ -299,6 +312,7 @@ def load_config(path: Path | None = None) -> AppConfig:
     embed_raw = raw.get("embed") or {}
     escalation_raw = raw.get("escalation") or {}
     targets_raw = raw.get("targets") or {}
+    demo_raw = raw.get("demo") or {}
 
     provider = str(vision_raw.get("provider", "local")).strip().lower()
     if provider in {"auto", "none", "false"}:
@@ -397,6 +411,9 @@ def load_config(path: Path | None = None) -> AppConfig:
             edge=str(targets_raw.get("edge") or TargetModels.edge),
             node=str(targets_raw.get("node") or TargetModels.node),
             hub=str(targets_raw.get("hub") or TargetModels.hub),
+        ),
+        demo=DemoConfig(
+            page_review=bool(demo_raw.get("page_review", False)),
         ),
         zones=_zones(raw.get("zones") or []),
         root=ROOT,

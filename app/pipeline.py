@@ -23,6 +23,7 @@ from app.mqtt_bus import MqttBus, MqttConfig
 from app.page import choose_paged_because
 from app.pol import PatternOfLife, absorb_into_file, source_key
 from app.record import ClipWriter, NullWriter, cleanup_old_events, save_thumb
+from app.samples import bundled_sample, demo_clips, is_sample_path, page_review_allowed
 from app.security import redact_source
 from app.situation import situation_lines
 from app.tiers import SEAT_LABELS, models_payload
@@ -56,39 +57,6 @@ def _placeholder_jpeg(width: int, height: int, quality: int) -> bytes:
         cv2.LINE_AA,
     )
     return _encode_jpeg(frame, quality)
-
-
-def bundled_sample(root: Path) -> Path | None:
-    names = ("street.mp4", "indoor.mp4", "package.mp4", "drone.mp4", "sample.mp4", "entrance.mp4")
-    dirs = (root / "data" / "samples", root / "data")
-    for folder in dirs:
-        for name in names:
-            path = folder / name
-            if path.is_file() and path.stat().st_size > 10_000:
-                return path
-    return None
-
-
-DEMO_CLIPS = (
-    ("street", "Street", "street.mp4"),
-    ("indoor", "Indoor", "indoor.mp4"),
-    ("package", "Left bag", "package.mp4"),
-)
-
-
-def demo_clips(root: Path) -> list[dict]:
-    out: list[dict] = []
-    for cid, label, name in DEMO_CLIPS:
-        path = root / "data" / "samples" / name
-        out.append(
-            {
-                "id": cid,
-                "label": label,
-                "path": f"data/samples/{name}",
-                "present": path.is_file() and path.stat().st_size > 10_000,
-            }
-        )
-    return out
 
 
 @dataclass
@@ -156,6 +124,8 @@ class Pipeline:
             conf=cfg.detection.conf,
             classes=cfg.detection.classes,
             device=cfg.detection.device,
+            drone_model=cfg.detection.drone_model,
+            drone_conf=cfg.detection.drone_conf,
         )
         self.tracker = ByteTracker(
             max_age=cfg.tracking.max_age_s,
@@ -326,6 +296,10 @@ class Pipeline:
                 "tracks": tracks,
                 "situation": list(self._situation),
                 "demo_clips": demo_clips(self.cfg.root),
+                "demo": {
+                    "page_review": bool(self.cfg.demo.page_review),
+                    "showcase_active": self._showcase_paging(),
+                },
                 "last_error": self.status.last_error,
                 "reconnects": self.status.reconnects,
                 "uptime_s": round(uptime, 1),
@@ -360,6 +334,9 @@ class Pipeline:
                 ),
                 "auth_required": bool(self.cfg.server.api_token),
                 "fallback": self._fallback,
+                "sample": bool(
+                    self._fallback or is_sample_path(self.cfg.root, self._active_source)
+                ),
             }
 
     def _verify_healthy(self) -> bool:
@@ -371,9 +348,18 @@ class Pipeline:
     def _provenance(self) -> str:
         if self._ingest_kind == "fixture":
             return "fixture"
-        if self._fallback:
+        if self._fallback or is_sample_path(self.cfg.root, self._active_source):
             return "sample"
         return "live"
+
+    def _showcase_paging(self) -> bool:
+        """Explicit demo opt-in: allowlisted sample clip may page Review."""
+        if not self.cfg.demo.page_review:
+            return False
+        if not (self._fallback or is_sample_path(self.cfg.root, self._active_source)):
+            return False
+        name = Path(str(self._active_source)).name
+        return page_review_allowed(name)
 
     def ingest_frame(self, frame: np.ndarray, now: float | None = None) -> None:
         """Offline/eval entry: one resized frame through detect + track."""
@@ -475,7 +461,11 @@ class Pipeline:
         cap = self._try_open(source)
         if cap is not None:
             self._active_source = source
-            self._file_loop = self._source_is_file(source) and bool(self.cfg.camera.loop_file)
+            sample_file = is_sample_path(self.cfg.root, source)
+            self._file_loop = self._source_is_file(source) and (
+                bool(self.cfg.camera.loop_file) or sample_file
+            )
+            # Explicit sample path is still sample provenance (not live PoL).
             self._fallback = False
             with self._lock:
                 self.status.source = str(source)
@@ -658,7 +648,10 @@ class Pipeline:
         if idle_due:
             self._last_idle_detect = now
         provenance = self._provenance()
-        can_page = provenance == "live" and bool(pol.confident)
+        showcase = self._showcase_paging()
+        can_page = (provenance == "live" and bool(pol.confident)) or (
+            provenance == "sample" and showcase and bool(pol.confident)
+        )
         detections: list[Detection] = []
         yolo_ran = False
         tracks: list[Track] = []
@@ -1049,6 +1042,7 @@ class Pipeline:
             bag=active.bag,
             unusual=active.unusual,
             named=active.named,
+            demo_paging=self._showcase_paging(),
         )
         active.features = dict(active.features or {})
         active.features["paged_because"] = paged_because
@@ -1161,11 +1155,20 @@ class Pipeline:
         feats["frame"] = {"w": int(w), "h": int(h)}
         feats["boxes"] = boxes_payload(detections, (w, h))
         detail = getattr(pol, "why", "") or pol.reason
-        if self._fallback:
-            extra = (
-                "This host is looping a short demo file. The 16-cell motion sketch "
-                "fills in seconds; that is not a Pattern of Life. Review is not paged."
-            )
+        sampleish = self._fallback or is_sample_path(self.cfg.root, self._active_source)
+        if sampleish:
+            if self._showcase_paging():
+                extra = (
+                    "Showcase sample — Review paging is enabled for this clip "
+                    "(demo.page_review). The motion sketch is not a site Pattern of Life; "
+                    "Normal dismissals do not absorb into PoL."
+                )
+            else:
+                extra = (
+                    "This host is looping a demo file. The 16-cell motion sketch "
+                    "fills in seconds; that is not a Pattern of Life. Review is not paged "
+                    "unless demo.page_review is enabled for an allowlisted showcase clip."
+                )
             if extra not in detail:
                 detail = f"{detail} {extra}".strip()
         feats["why"] = {
@@ -1177,6 +1180,8 @@ class Pipeline:
             "motion_spike": round(float(pol.motion_spike), 3),
             "learning": not bool(pol.confident),
             "fallback": bool(self._fallback),
+            "sample": bool(sampleish),
+            "showcase_paging": bool(self._showcase_paging()),
             "samples": int(pol.samples),
         }
 
@@ -1270,6 +1275,7 @@ class Pipeline:
             verify_status=verdict.status,
             alert=verdict.alert,
             audit=audit,
+            demo_paging=self._showcase_paging(),
         )
         if prior_status in {"confirmed", "dismissed"}:
             self.store.insert_disagreement(

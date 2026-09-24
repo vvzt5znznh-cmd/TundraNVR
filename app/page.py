@@ -35,10 +35,11 @@ def choose_paged_because(
     verify_status: str = "",
     alert: bool = False,
     audit: bool = False,
+    demo_paging: bool = False,
 ) -> str:
-    if provenance == "sample":
-        return "sample"
-    if provenance == "fixture":
+    # Default: looping sample/fixture never looks like a live site page.
+    # Showcase demos opt in via demo.page_review + allowlisted clips.
+    if provenance in {"sample", "fixture"} and not demo_paging:
         return "sample"
     if learning:
         return "learning"

@@ -3,7 +3,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-VERSION = "0.14.0"
+VERSION = "0.15.0"
 ROOT = Path(__file__).resolve().parent.parent
 
 

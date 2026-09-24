@@ -15,10 +15,10 @@ Single Python service. There are no tests or linters configured in this repo bes
 - `torch` and `torchvision` MUST both be the CPU builds from `https://download.pytorch.org/whl/cpu` and must match. Installing `requirements.txt` on its own pulls a generic `torchvision` wheel from PyPI that is ABI-incompatible with the CPU `torch`, producing `RuntimeError: operator torchvision::nms does not exist` at first detection. The update script fixes this by force-reinstalling the `+cpu` `torchvision` wheel last. If you ever see that NMS error, run `pip install --force-reinstall --no-deps torchvision --index-url https://download.pytorch.org/whl/cpu`.
 
 ### Sample video + model
-- Default `camera.source` is index `0` (or an RTSP URL set in Details). With no camera, the process loops `data/samples/street.mp4` (Intel people/bicycles/cars), then indoor, then package. Fetch with `python scripts/download_sample.py`. Details presets: Street / Indoor / Left bag.
+- Default `camera.source` is index `0` (or an RTSP URL set in Details). With no camera, the process loops `data/samples/street.mp4` (Intel people/bicycles/cars), then indoor, parking, courtyard, lobby, package, drones. Fetch with `python scripts/download_sample.py`. Details presets: Street / Indoor / Parking / Courtyard / Lobby / Left bag / Drones.
 - Situation lines on Detect/Verify come from track templates (dwell, zone, nearby vehicle, unattended bag). Not an LLM narrator. Track ids are not identity — do not add ReID, face, or LPR.
-- Do not default to `entrance.mp4` (CAVIAR mall — YOLO false persons) or treat `drone.mp4` as a building camera.
-- A looping file is a **motion sketch**, not a site Pattern of Life. Sample fallback does not page Review.
+- Do not default to `entrance.mp4` (CAVIAR mall — YOLO false persons). `drones.mp4` is a **static/ground camera filming a UAV in frame** — not drone-POV / gimbal footage. Stock YOLOv8n has no drone class; `detection.drone_model: drone-yolo.pt` is a secondary namer (downloaded by the sample script).
+- A looping file is a **motion sketch**, not a site Pattern of Life. Sample provenance never absorbs into PoL. By default samples do **not** page Review. For demos, set `demo.page_review: true` so allowlisted showcase clips (courtyard / lobby / package / drones in `app/samples.py`) may page after the session sketch is confident.
 - YOLO downloads `yolov8n.pt` on the first **Edge trip**. Needs internet. AGPL — see LICENSING.md.
 
 ### Run
@@ -30,4 +30,4 @@ Single Python service. There are no tests or linters configured in this repo bes
 - Hub verifier is local-only unless `vision.allow_cloud: true`. Fail-open: `verifier_status=unavailable` keeps the rule alert as `operator_status=unverified` (separate Events shelf). A few percent of Verify-suppressed trips page as `audit`.
 - Escalation default is `auto` (recall while Verify is healthy, else `pol_score`). Explicit `recall` / `pol_score` remain for eval. Detect is a namer in recall. `/health` → `escalation` (`mode`, `mode_effective`, `paged_because`, audit + latency) and `models` (want vs running per seat).
 - `python scripts/eval.py --smoke` writes a fixture ablation table (NAR/Pd/FAR language); never treat it as site headline numbers. Without `--allow-fixture` / `--smoke`, eval refuses headline metrics when provenance is not `live`.
-- Sample fallback does not page Review. The 16/64 cell fill is a session motion map. Do not add audio, face recognition, LPR, or emotion recognition.
+- Sample provenance does not absorb into PoL. Review paging on samples requires `demo.page_review: true` plus an allowlisted showcase clip. The 16/64 cell fill is a session motion map. Do not add audio, face recognition, LPR, or emotion recognition.
