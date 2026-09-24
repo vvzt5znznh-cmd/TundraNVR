@@ -38,7 +38,6 @@ def decide_hub(
     pol_confident: bool,
     pol_score: float,
     pol_min: float,
-    no_badge: bool,
     verify_healthy: bool = True,
 ) -> EscalationDecision:
     """Return whether Detect should hand this trip to Verify.
@@ -59,8 +58,5 @@ def decide_hub(
     if unsure:
         return EscalationDecision(True, "Detect could not name this", resolved)
     if still_high:
-        reason = "still unusual after naming"
-        if no_badge:
-            reason = "no badge within window"
-        return EscalationDecision(True, reason, resolved)
+        return EscalationDecision(True, "still unusual after naming", resolved)
     return EscalationDecision(False, "", resolved)

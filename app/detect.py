@@ -81,7 +81,6 @@ class ObjectDetector:
         self.model_name = model
         self.conf = conf
         self.allowed = {normalize_class(name) for name in (classes or ["person", "car", "dog", "cat"])}
-        self.allowed.add("drone")
         self.device = device
         self.drone_model_name = (drone_model or "").strip()
         self.drone_conf = float(drone_conf)

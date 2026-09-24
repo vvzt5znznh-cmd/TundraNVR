@@ -2,15 +2,22 @@
 
 Camera → **Edge** (unusual?) → **Detect** (YOLO + track) → **Verify** (VLM **verdict**) → **Review**.
 
-Motion is pixel change. Pattern of Life is a learned occupancy footprint. YOLO names Edge trips only. Detect assigns stable track IDs (one track ≤ one event). Verify adjudicates with a Set-of-Mark prompt and structured JSON. Captions are a search byproduct, never the decision.
+That is the whole product. Side channels (badge fusion, thumb-novelty kNN, MQTT, a second class-allowlist “anomaly” checker, a caption-only VLM pass) are **off** and not part of the decision.
 
-**Escalation default is `auto`** (`escalation.mode`): recall while Verify is healthy, else `pol_score`. Explicit `recall` / `pol_score` remain for eval. Detect is a namer in recall (it does not suppress). Verify suppresses. When Verify is down, live unusual traffic goes to an Unverified shelf — not mixed with pending Review. Sample/fixture provenance never absorbs into Pattern of Life. By default samples do **not** page Review; set `demo.page_review: true` to allow allowlisted showcase clips (see below).
+**What runs**
+
+1. **Edge** — OpenCV frame difference plus a learned occupancy footprint. No neural net. Unusual, still-learning, or idle-sweep frames go to Detect.
+2. **Detect** — YOLO names those trips; ByteTrack holds an id for wall-clock dwell (one track ≤ one event). Detect does **not** suppress in recall. The only Detect rule is unattended bag (backpack/handbag/suitcase, dwell, no person nearby).
+3. **Verify** — local VLM, Set-of-Mark JPEG, JSON `alert` / `category` / `reason`. Captions are a search byproduct, never the decision. Fail-open: if Verify is down, the rule alert sits on an **Unverified** shelf.
+4. **Review** — Incident or Normal. Normal absorbs into Edge’s occupancy map (two Normals before a large absorb). Sample/fixture never absorb and never page (unless `demo.page_review`).
+
+**Escalation default is `auto`** (`escalation.mode`): recall while Verify is healthy, else `pol_score`. Explicit `recall` / `pol_score` remain for eval. Detect is a namer. Verify suppresses. A few percent of Verify-suppressed trips still page as **Audit**. Sample/fixture provenance never absorbs into Pattern of Life. By default samples do **not** page Review; set `demo.page_review: true` to allow allowlisted showcase clips (see below).
 
 Default vision is **local-only**. Cloud OpenAI requires `vision.allow_cloud: true`. See [`LICENSING.md`](LICENSING.md) and [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md).
 
 Optional **Jev page/suppress gate** (spike, off by default): TypeSafe’s typed noul over **structured trip state only** (dwell, zone, pol_score, classes, bag/situation templates, Verify health) — never frames. Enable with `jev.enabled: true`, remote calls also need `jev.allow_cloud: true` plus `OPENROUTER_API_KEY` (or `TYPESAFE_API_KEY`). Fail-open when disabled, denied, or unreachable (same spirit as Verify). Offline smoke: `python scripts/jev_smoke.py`. `/health` → `jev` (last action, counts, latency).
 
-This PoC is **one building camera**. Critical-infrastructure buyers will still scrutinise it as Annex III-adjacent; that is documentation and later work, not this binary. Face recognition, LPR, emotion recognition, and audio are **out**.
+This PoC is **one building camera**. Face recognition, LPR, emotion recognition, audio, badge fusion, and 24/7 NVR recording are **out** until they have a real feed and a seat in this cascade.
 
 ```bash
 python3.12 -m venv .venv
@@ -59,8 +66,8 @@ Offline ablation (fixtures only — **not** headline NAR/Pd/FAR unless provenanc
 python scripts/eval.py --smoke
 ```
 
-`--smoke` implies `--allow-fixture` so the table still has numbers, stamped `fixture`. Without that flag, eval refuses headline NAR/Pd/FAR on sample/fixture provenance. Every row stamps `mode` and `mode_effective`.
+`--smoke` implies `--allow-fixture` so the table still has numbers, stamped `fixture`. Without that flag, eval refuses headline NAR/Pd/FAR on sample/fixture provenance. Stages are `motion` / `detect` / `track` / `verifier`. Every row stamps `mode` and `mode_effective`.
 
-`/health` reports `escalation` counts (Edge trips → Detect proposals → Verify alerts → Review confirms). Internal keys remain `raspberry_trips` / `node_proposals` / `hub_alerts`.
+`/health` reports `escalation` counts (`edge_trips` → `node_proposals` → `hub_alerts`) plus `paged_because`, audit, and latency.
 
 `torch` and `torchvision` must both be the CPU wheels from that index, or detection fails with `torchvision::nms does not exist`. YOLO fetches `yolov8n.pt` on the first Edge trip (AGPL — do not fine-tune until the detector licence is decided).

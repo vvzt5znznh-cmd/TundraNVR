@@ -51,8 +51,6 @@ detection:
     - suitcase
     - umbrella
     - skateboard
-    - airplane
-    - drone
   device: cpu
   # Stock YOLOv8n has no drone class. Secondary UAV weights from
   # scripts/download_sample.py (drone-yolo.pt). Empty = skip.
@@ -60,7 +58,7 @@ detection:
   drone_conf: 0.55
 
 tracking:
-  # Wall-clock seconds since last Detect observe. Was tick-count `max_age`.
+  # Wall-clock seconds since last Detect observe.
   max_age_s: 15
   # Need a second confirm before naming — cuts one-frame pavement ghosts.
   min_hits: 3
@@ -85,8 +83,8 @@ server:
 
 escalation:
   # auto: recall while Verify is healthy, else pol_score.
-  # recall: any plausible Detect trip goes to Verify (eval / healthy suppressor).
-  # pol_score: legacy gate on Pattern of Life score ≥ pol_score_min.
+  # recall: any Detect trip goes to Verify.
+  # pol_score: Edge unusual-score gate when Verify is down.
   mode: auto
   pol_score_min: 0.7
 
@@ -97,11 +95,12 @@ escalation:
 demo:
   page_review: false
 
-# Roadmap model at each seat. `running` in /health is what this process loads.
+# What this process actually loads. Not a roadmap.
+
 targets:
   edge: OpenCV + Pattern of Life (no neural net)
-  node: RF-DETR
-  hub: Moondream 3
+  node: YOLOv8n
+  hub: Moondream
 
 vision:
   enabled: true
@@ -114,8 +113,8 @@ vision:
   audit_rate: 0.03
   verify_fresh_seconds: 120
   policy: >
-    Fixed building camera. Alert on unattended bags and after-hours people
-    with no badge in the last minute. Ordinary doorway traffic is normal.
+    Fixed building camera. Alert on unattended bags and after-hours people.
+    Ordinary doorway traffic is normal.
 
 # Optional TypeSafe Jev page/suppress gate (spike). Structured trip state only
 # — never frames. Remote calls need allow_cloud: true plus OPENROUTER_API_KEY
@@ -132,8 +131,9 @@ jev:
   suppress_threshold: 0.35
   dry_run: false
 
+# Side channels remain off the decision path (cascade freeze).
 fusion:
-  enabled: true
+  enabled: false
   badge_window_seconds: 60
   fixture: data/fusion/badges.jsonl
 
@@ -144,33 +144,16 @@ mqtt:
   prefix: tundranvr
 
 embed:
-  enabled: true
+  enabled: false
   knn: 5
   gate_alerts: false
+
 
 zones:
   - name: doorway
     polygon: [[0.0, 0.35], [1.0, 0.35], [1.0, 1.0], [0.0, 1.0]]
 
 monitoring:
-  expected_classes:
-    - person
-    - bicycle
-    - car
-    - motorcycle
-    - bus
-    - truck
-    - backpack
-    - handbag
-    - suitcase
-    - umbrella
-    - dog
-    - cat
-    - bird
-    - skateboard
-  alert_classes:
-    - drone
-    - airplane
   unattended_bags: true
   bag_dwell_seconds: 8
   bag_person_radius: 120
