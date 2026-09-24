@@ -72,7 +72,7 @@ class ObjectDetector:
     def __init__(
         self,
         model: str = "yolov8n.pt",
-        conf: float = 0.4,
+        conf: float = 0.45,
         classes: list[str] | None = None,
         device: str = "cpu",
         drone_model: str = "",

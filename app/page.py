@@ -11,6 +11,8 @@ REASONS = (
     "verify_unavailable",
     "verified",
     "audit",
+    "jev_page",
+    "jev_suppress",
 )
 
 LABELS = {
@@ -22,6 +24,8 @@ LABELS = {
     "verify_unavailable": "Unverified — Verify offline",
     "verified": "Verify alert",
     "audit": "Audit sample",
+    "jev_page": "Jev gated page",
+    "jev_suppress": "Jev suppressed",
 }
 
 
@@ -36,6 +40,7 @@ def choose_paged_because(
     alert: bool = False,
     audit: bool = False,
     demo_paging: bool = False,
+    jev_action: str = "",
 ) -> str:
     # Default: looping sample/fixture never looks like a live site page.
     # Showcase demos opt in via demo.page_review + allowlisted clips.
@@ -43,6 +48,10 @@ def choose_paged_because(
         return "sample"
     if learning:
         return "learning"
+    if jev_action == "suppress":
+        return "jev_suppress"
+    if jev_action == "page":
+        return "jev_page"
     if audit:
         return "audit"
     if verify_status in {"unavailable", "malformed", "error"}:

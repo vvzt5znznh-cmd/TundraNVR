@@ -11,6 +11,7 @@ This is a checklist for the PoC, not a full IEC 62443 zone/conduit design.
 - **Do not log RTSP secrets.** Logs, `/health`, and SQLite event/track/embedding `source` redact URL userinfo. `GET /api/settings` returns the same redacted source. Paste a full URL to change the camera; a redacted `***@` value is rejected. kNN keys use the redacted source, not `rtsp://user:pass@host`.
 - **Optional token on events, media, and mutating APIs.** Set `server.api_token` or `TUNDRANVR_API_TOKEN`. Then `GET /api/events`, `GET /api/events/{id}`, `GET /media/...`, `PUT /api/settings`, and `POST /api/events/{id}/review` require `Authorization: Bearer <token>` or `X-API-Token`. Live MJPEG (`/api/stream.mjpg`) stays open for the PoC. Empty token = no auth (default); Live shows a **NO AUTH** pill next to Sample.
 - **No audio, no face/LPR, no emotion recognition.** Out of scope on both privacy and AI Act grounds. Do not copy Frigate audio events.
+- **Optional Jev cloud gate is structured-state only.** When `jev.enabled` and `jev.allow_cloud` are both true, trip metadata (not frames) may leave the host for a typed page/suppress noul. Default is local/off; deny / error fails open to Verify.
 
 ## Still open (later slices)
 

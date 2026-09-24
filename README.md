@@ -8,6 +8,8 @@ Motion is pixel change. Pattern of Life is a learned occupancy footprint. YOLO n
 
 Default vision is **local-only**. Cloud OpenAI requires `vision.allow_cloud: true`. See [`LICENSING.md`](LICENSING.md) and [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md).
 
+Optional **Jev page/suppress gate** (spike, off by default): TypeSafe’s typed noul over **structured trip state only** (dwell, zone, pol_score, classes, bag/situation templates, Verify health) — never frames. Enable with `jev.enabled: true`, remote calls also need `jev.allow_cloud: true` plus `OPENROUTER_API_KEY` (or `TYPESAFE_API_KEY`). Fail-open when disabled, denied, or unreachable (same spirit as Verify). Offline smoke: `python scripts/jev_smoke.py`. `/health` → `jev` (last action, counts, latency).
+
 This PoC is **one building camera**. Critical-infrastructure buyers will still scrutinise it as Annex III-adjacent; that is documentation and later work, not this binary. Face recognition, LPR, emotion recognition, and audio are **out**.
 
 ```bash

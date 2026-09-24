@@ -20,6 +20,10 @@ Face recognition, licence-plate recognition, biometric categorisation, and emoti
 
 Frames of identifiable people must not leave the machine unless `vision.allow_cloud: true` is set explicitly. The default provider is local (Ollama) or off. See `config.yaml`.
 
+## Jev / cloud (optional spike)
+
+The optional Jev page/suppress gate (`jev.enabled`, `app/jev_gate.py`) may call TypeSafe via OpenRouter. It sends **structured trip state only** (classes, scores, dwell, zone, bag/situation template lines, Verify health flags) — **not** frames, thumbnails, audio, faces, or identity. Remote calls require `jev.allow_cloud: true` (sibling of `vision.allow_cloud`) and `OPENROUTER_API_KEY` or `TYPESAFE_API_KEY`. Default is off; missing key / errors fail open to the existing Verify path.
+
 ## Audio
 
 This project must not record or analyse audio. Norwegian law generally forbids recording others' conversations; do not add Frigate-style audio events.
