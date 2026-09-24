@@ -98,6 +98,7 @@ def _edge_ghost(
     touches_top = y1 <= my
     touches_bottom = y2 >= frame_h - my
     # Only reject very thin edge strips — partial people/cars at the border stay.
+    # Wider edge-glued pavement "cars" are handled by motion_gate_detections.
     thin_w = max(mx, int(frame_w * 0.03))
     thin_h = max(my, int(frame_h * 0.03))
     if (touches_left or touches_right) and bw <= thin_w:
@@ -147,6 +148,78 @@ def filter_detections(
     cfg: BoxFilterConfig | None = None,
 ) -> list[Detection]:
     return [d for d in detections if keep_detection(d, frame_wh, cfg)]
+
+
+def overlaps_motion(
+    xyxy: tuple[int, int, int, int],
+    frame_wh: tuple[int, int],
+    grid,
+    *,
+    min_cell: float = 0.05,
+) -> bool:
+    """True when any 8x8 motion cell under the box is active.
+
+    Used to drop pavement-line FPs that fire far from the Edge trip blob
+    (e.g. left-edge \"car\" while the cyclist moves on the right).
+    """
+    if grid is None:
+        return True
+    try:
+        import numpy as np
+
+        arr = np.asarray(grid, dtype=float)
+    except Exception:
+        return True
+    if arr.ndim != 2 or arr.size == 0:
+        return True
+    rows, cols = arr.shape
+    frame_w, frame_h = max(int(frame_wh[0]), 1), max(int(frame_wh[1]), 1)
+    x1, y1, x2, y2 = (int(v) for v in xyxy)
+    if x2 <= x1 or y2 <= y1:
+        return False
+    c0 = max(0, min(cols - 1, int(x1 * cols / frame_w)))
+    c1 = max(0, min(cols - 1, int((x2 - 1) * cols / frame_w)))
+    r0 = max(0, min(rows - 1, int(y1 * rows / frame_h)))
+    r1 = max(0, min(rows - 1, int((y2 - 1) * rows / frame_h)))
+    if c1 < c0:
+        c0, c1 = c1, c0
+    if r1 < r0:
+        r0, r1 = r1, r0
+    patch = arr[r0 : r1 + 1, c0 : c1 + 1]
+    if patch.size == 0:
+        return False
+    return float(patch.max()) >= float(min_cell)
+
+
+# Classes that must sit on the Edge motion blob (bags exempt — still objects).
+MOTION_GATED_CLASSES = frozenset(VEHICLE_CLASSES | {"person"})
+
+
+def motion_gate_detections(
+    detections: list[Detection],
+    frame_wh: tuple[int, int],
+    grid,
+    existing_xyxy: list[tuple[int, int, int, int]],
+    *,
+    min_cell: float = 0.05,
+    iou_match: float = 0.3,
+) -> list[Detection]:
+    """On Edge trips, drop motion-gated classes whose box misses the motion grid.
+
+    Existing tracks may still update (object can pause briefly). Bags skip the gate.
+    """
+    kept: list[Detection] = []
+    for det in detections:
+        cls = normalize_class(det.cls)
+        if cls not in MOTION_GATED_CLASSES:
+            kept.append(det)
+            continue
+        if any(_iou(det.xyxy, box) >= iou_match for box in existing_xyxy):
+            kept.append(det)
+            continue
+        if overlaps_motion(det.xyxy, frame_wh, grid, min_cell=min_cell):
+            kept.append(det)
+    return kept
 
 
 def _iou(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
