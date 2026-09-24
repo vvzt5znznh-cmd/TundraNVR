@@ -24,6 +24,7 @@ from app.detect_filters import (
 from app.embed import EmbeddingIndex, thumb_hist
 from app.escalate import decide_hub, effective_mode
 from app.fusion import FusionBus, clock_context
+from app.jev_gate import JevStats, build_trip_state, decide_page_gate
 from app.motion import MotionDetector
 from app.mqtt_bus import MqttBus, MqttConfig
 from app.page import choose_paged_because
@@ -234,6 +235,7 @@ class Pipeline:
         self.audit_shown = 0
         self.audit_confirmed = 0
         self._paged_counts: dict[str, int] = {}
+        self.jev_stats = JevStats()
         placeholder = _placeholder_jpeg(
             cfg.camera.width, cfg.camera.height, cfg.pipeline.jpeg_quality
         )
@@ -336,6 +338,7 @@ class Pipeline:
                 "model": self.cfg.detection.model,
                 "vision": self.status.verifier_provider,
                 "allow_cloud": bool(self.cfg.vision.allow_cloud),
+                "jev": self.jev_stats.health(self.cfg.jev),
                 "yolo_ran": self.status.yolo_ran,
                 "tracks": tracks,
                 "situation": list(self._situation),
@@ -1174,7 +1177,29 @@ class Pipeline:
             },
         )
         if event_id and active.hub_needed and active.can_page:
-            self._run_verifier(event_id, active, classes, score, anomaly_reason, rule_alert)
+            jev_result = self._run_jev_gate(active, classes, score, anomaly_reason)
+            if jev_result.action == "suppress" and jev_result.applied:
+                self._apply_jev_suppress(
+                    event_id, active, classes, score, anomaly_reason, jev_result
+                )
+            elif jev_result.action == "page" and jev_result.applied:
+                self._apply_jev_page(
+                    event_id, active, classes, score, anomaly_reason, jev_result
+                )
+            else:
+                if jev_result.status not in {"disabled"}:
+                    # Record that Jev deferred to Verify (or failed open).
+                    prior = self.store.get(event_id) or {}
+                    self.store.update_verdict(
+                        event_id,
+                        summary=str(prior.get("summary") or ""),
+                        anomaly=bool(prior.get("anomaly")),
+                        anomaly_reason=str(prior.get("anomaly_reason") or ""),
+                        verifier_provider=str(prior.get("verifier_provider") or ""),
+                        verifier_status=str(prior.get("verifier_status") or ""),
+                        features_patch={"jev": jev_result.as_dict()},
+                    )
+                self._run_verifier(event_id, active, classes, score, anomaly_reason, rule_alert)
         elif event_id:
             self._paged_counts[paged_because] = self._paged_counts.get(paged_because, 0) + 1
             self.store.update_verdict(
@@ -1194,6 +1219,134 @@ class Pipeline:
             cleanup_old_events(self.store, self.cfg.data_dir, self.cfg.events.retention_days)
         except Exception:
             log.exception("Retention cleanup failed")
+
+    def _run_jev_gate(
+        self,
+        active: _ActiveEvent,
+        classes: list[str],
+        score: float,
+        anomaly_reason: str,
+    ):
+        feats = active.features or {}
+        fusion = active.fusion or {}
+        badge = fusion.get("badge_within_window")
+        state = build_trip_state(
+            classes=classes,
+            score=score,
+            pol_score=float(active.pol_score),
+            dwell_s=feats.get("dwell_s"),
+            zone=str(feats.get("zone") or ""),
+            bag=bool(active.bag),
+            named=bool(active.named),
+            unusual=bool(active.unusual),
+            learning=bool(active.learning),
+            no_badge=badge is False,
+            verify_healthy=self._verify_healthy(),
+            anomaly_reason=anomaly_reason,
+            situation=list(self._situation),
+            provenance=active.provenance,
+            mode_effective=str(getattr(active, "mode_effective", "") or ""),
+        )
+        try:
+            result = decide_page_gate(self.cfg.jev, state)
+        except Exception as exc:
+            log.warning("Jev gate crashed; fail-open: %s", exc)
+            from app.jev_gate import rule_fallback
+
+            result = rule_fallback(reason=f"jev crash: {exc}")
+        self.jev_stats.record(result)
+        active.features = dict(active.features or {})
+        active.features["jev"] = result.as_dict()
+        active.features["jev_state_keys"] = sorted(state.keys())
+        log.info(
+            "Jev gate action=%s status=%s noul=%s applied=%s",
+            result.action,
+            result.status,
+            result.noul,
+            result.applied,
+        )
+        return result
+
+    def _apply_jev_suppress(
+        self,
+        event_id: int,
+        active: _ActiveEvent,
+        classes: list[str],
+        score: float,
+        anomaly_reason: str,
+        jev_result,
+    ) -> None:
+        summary = fallback_summary(classes, score, anomaly_reason)
+        summary = f"{summary} Jev suppressed (noul={jev_result.noul})."
+        paged_because = choose_paged_because(
+            provenance=active.provenance,
+            learning=active.learning,
+            bag=active.bag,
+            unusual=active.unusual,
+            named=active.named,
+            jev_action="suppress",
+        )
+        self.store.update_verdict(
+            event_id,
+            summary=summary,
+            anomaly=False,
+            anomaly_reason=jev_result.reason,
+            verifier_provider=f"jev:{jev_result.provider}",
+            verifier_status="jev-suppress",
+            operator_status="",
+            stopped_at="hub",
+            paged_because=paged_because,
+            features_patch={"jev": jev_result.as_dict()},
+        )
+        self._paged_counts[paged_because] = self._paged_counts.get(paged_because, 0) + 1
+        self.escalation_counts["hub_handoffs"] += 1
+        t0 = active.t0_mono or time.monotonic()
+        self.verdict_latencies_ms.append((time.monotonic() - t0) * 1000.0)
+        with self._lock:
+            self.status.last_scene = summary
+            self.status.last_anomaly = ""
+
+    def _apply_jev_page(
+        self,
+        event_id: int,
+        active: _ActiveEvent,
+        classes: list[str],
+        score: float,
+        anomaly_reason: str,
+        jev_result,
+    ) -> None:
+        """High-noul path: page operator without waiting on Verify suppress."""
+        summary = fallback_summary(classes, score, anomaly_reason)
+        summary = f"{summary} Jev gated page (noul={jev_result.noul})."
+        reason = anomaly_reason or jev_result.reason or "Jev page"
+        paged_because = choose_paged_because(
+            provenance=active.provenance,
+            learning=active.learning,
+            bag=active.bag,
+            unusual=active.unusual,
+            named=active.named,
+            jev_action="page",
+        )
+        self.store.update_verdict(
+            event_id,
+            summary=summary,
+            anomaly=True,
+            anomaly_reason=reason,
+            verifier_provider=f"jev:{jev_result.provider}",
+            verifier_status="jev-page",
+            operator_status="pending",
+            stopped_at="operator",
+            paged_because=paged_because,
+            features_patch={"jev": jev_result.as_dict()},
+        )
+        self._paged_counts[paged_because] = self._paged_counts.get(paged_because, 0) + 1
+        self.escalation_counts["hub_handoffs"] += 1
+        self.escalation_counts["hub_alerts"] += 1
+        t0 = active.t0_mono or time.monotonic()
+        self.verdict_latencies_ms.append((time.monotonic() - t0) * 1000.0)
+        with self._lock:
+            self.status.last_scene = summary
+            self.status.last_anomaly = reason
 
     def _is_dup(self, cls: str, detections: list[Detection], now: float) -> bool:
         window = max(1.0, float(self.cfg.tracking.dedup_seconds))

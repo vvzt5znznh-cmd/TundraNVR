@@ -206,6 +206,43 @@ class EscalationConfig:
 
 
 @dataclass
+class JevConfig:
+    """Optional TypeSafe Jev page/suppress gate (structured state only).
+
+    Remote calls require `allow_cloud: true` (same spirit as `vision.allow_cloud`)
+    plus OPENROUTER_API_KEY or TYPESAFE_API_KEY. Fail-open when disabled,
+    denied, or unreachable — pipeline keeps the Verify path.
+    """
+
+    enabled: bool = False
+    allow_cloud: bool = False
+    provider: str = "openrouter"
+    model: str = "typesafe/jev-1.13"
+    base_url: str = "https://openrouter.ai/api/alpha/decisions"
+    timeout_seconds: float = 2.0
+    page_threshold: float = 0.75
+    suppress_threshold: float = 0.35
+    dry_run: bool = False
+    api_key: str = ""
+    instructions: str = (
+        "Should this fixed building-camera trip page a human operator for review?"
+    )
+    criteria: dict[str, str] = field(
+        default_factory=lambda: {
+            "true": (
+                "Unattended bag, after-hours person without badge, intrusion, "
+                "drone/airplane near the building, or clearly unusual activity "
+                "worth interrupting an operator."
+            ),
+            "false": (
+                "Ordinary doorway traffic, expected vehicles or pedestrians for "
+                "this camera, learning/sketch noise, or activity that should stay suppressed."
+            ),
+        }
+    )
+
+
+@dataclass
 class TargetModels:
     """Roadmap model at each seat vs what this process actually loads."""
 
@@ -235,6 +272,7 @@ class AppConfig:
     mqtt: MqttSettings
     embed: EmbedConfig
     escalation: EscalationConfig
+    jev: JevConfig
     targets: TargetModels
     zones: list[ZoneConfig] = field(default_factory=list)
     root: Path = ROOT
@@ -318,11 +356,17 @@ def load_config(path: Path | None = None) -> AppConfig:
     mqtt_raw = raw.get("mqtt") or {}
     embed_raw = raw.get("embed") or {}
     escalation_raw = raw.get("escalation") or {}
+    jev_raw = raw.get("jev") or {}
     targets_raw = raw.get("targets") or {}
 
     provider = str(vision_raw.get("provider", "local")).strip().lower()
     if provider in {"auto", "none", "false"}:
         provider = "local"
+
+    jev_provider = str(jev_raw.get("provider", "openrouter")).strip().lower() or "openrouter"
+    jev_criteria = jev_raw.get("criteria")
+    if not isinstance(jev_criteria, dict) or not jev_criteria:
+        jev_criteria = None
 
     cfg = AppConfig(
         camera=CameraConfig(
@@ -434,6 +478,25 @@ def load_config(path: Path | None = None) -> AppConfig:
             mode=_escalation_mode(escalation_raw.get("mode")),
             pol_score_min=float(escalation_raw.get("pol_score_min", 0.7)),
         ),
+        jev=JevConfig(
+            enabled=bool(jev_raw.get("enabled", False)),
+            allow_cloud=bool(jev_raw.get("allow_cloud", False)),
+            provider=jev_provider,
+            model=str(jev_raw.get("model") or "typesafe/jev-1.13"),
+            base_url=str(
+                jev_raw.get("base_url")
+                or "https://openrouter.ai/api/alpha/decisions"
+            ),
+            timeout_seconds=float(jev_raw.get("timeout_seconds", 2.0)),
+            page_threshold=float(jev_raw.get("page_threshold", 0.75)),
+            suppress_threshold=float(jev_raw.get("suppress_threshold", 0.35)),
+            dry_run=bool(jev_raw.get("dry_run", False)),
+            api_key=str(jev_raw.get("api_key") or "").strip(),
+            instructions=str(
+                jev_raw.get("instructions") or JevConfig.instructions
+            ),
+            criteria=dict(jev_criteria or JevConfig().criteria),
+        ),
         targets=TargetModels(
             edge=str(targets_raw.get("edge") or TargetModels.edge),
             node=str(targets_raw.get("node") or TargetModels.node),
@@ -504,6 +567,12 @@ def public_settings(cfg: AppConfig) -> dict[str, Any]:
         "model": cfg.detection.model,
         "vision": effective_provider(cfg.vision) if cfg.vision.enabled else "off",
         "allow_cloud": bool(cfg.vision.allow_cloud),
+        "jev": {
+            "enabled": bool(cfg.jev.enabled),
+            "allow_cloud": bool(cfg.jev.allow_cloud),
+            "provider": cfg.jev.provider,
+            "dry_run": bool(cfg.jev.dry_run),
+        },
         "auth_required": bool(cfg.server.api_token),
         "escalation": cfg.escalation.mode,
         "targets": {
