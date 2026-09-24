@@ -29,28 +29,7 @@ BUILDING_CLASSES = [
     "suitcase",
     "umbrella",
     "skateboard",
-    "airplane",
-    "drone",
 ]
-
-EXPECTED_CLASSES = [
-    "person",
-    "bicycle",
-    "car",
-    "motorcycle",
-    "bus",
-    "truck",
-    "backpack",
-    "handbag",
-    "suitcase",
-    "umbrella",
-    "dog",
-    "cat",
-    "bird",
-    "skateboard",
-]
-
-ALERT_CLASSES = ["drone", "airplane"]
 
 
 class SettingsError(ValueError):
@@ -93,17 +72,35 @@ class MotionConfig:
 @dataclass
 class DetectionConfig:
     model: str = "yolov8n.pt"
-    conf: float = 0.5
+    # Floor for YOLO predict; class_conf may raise per-label floors after predict.
+    conf: float = 0.45
     classes: list[str] = field(default_factory=lambda: list(BUILDING_CLASSES))
     device: str = "cpu"
     drone_model: str = ""
     drone_conf: float = 0.55
+    # Drop tiny / edge-glued / absurd-aspect boxes (parking-line ghosts).
+    min_box_area_frac: float = 0.0012
+    min_side_px: int = 24
+    edge_margin_frac: float = 0.02
+    edge_reject: bool = True
+    class_conf: dict[str, float] = field(
+        default_factory=lambda: {
+            "car": 0.55,
+            "truck": 0.55,
+            "bus": 0.55,
+            "motorcycle": 0.5,
+            "bicycle": 0.5,
+            "person": 0.45,
+            "airplane": 0.55,
+            "drone": 0.55,
+        }
+    )
+    # Review thumbs / event box lists prefer the trip track, not every coincident FP.
+    primary_track_boxes: bool = True
 
 
 @dataclass
 class MonitoringConfig:
-    expected_classes: list[str] = field(default_factory=lambda: list(EXPECTED_CLASSES))
-    alert_classes: list[str] = field(default_factory=lambda: list(ALERT_CLASSES))
     unattended_bags: bool = True
     bag_dwell_seconds: float = 8.0
     bag_person_radius: float = 120.0
@@ -112,7 +109,7 @@ class MonitoringConfig:
 @dataclass
 class TrackingConfig:
     max_age_s: float = 15.0
-    min_hits: int = 2
+    min_hits: int = 3
     iou_match: float = 0.3
     dedup_seconds: float = 8.0
 
@@ -146,14 +143,14 @@ class VisionConfig:
     audit_rate: float = 0.03
     verify_fresh_seconds: float = 120.0
     policy: str = (
-        "Fixed building camera. Alert on unattended bags and after-hours people "
-        "with no badge in the last minute. Ordinary doorway traffic is normal."
+        "Fixed building camera. Alert on unattended bags and after-hours people. "
+        "Ordinary doorway traffic is normal."
     )
 
 
 @dataclass
 class FusionConfig:
-    enabled: bool = True
+    enabled: bool = False
     badge_window_seconds: float = 60.0
     fixture: str = "data/fusion/badges.jsonl"
 
@@ -168,9 +165,8 @@ class MqttSettings:
 
 @dataclass
 class EmbedConfig:
-    enabled: bool = True
+    enabled: bool = False
     knn: int = 5
-    gate_alerts: bool = False
 
 
 @dataclass
@@ -186,12 +182,62 @@ class EscalationConfig:
 
 
 @dataclass
+class DemoConfig:
+    """Showcase sample Review paging (opt-in).
+
+    Sample/fixture provenance never absorbs into Pattern of Life.
+    When ``page_review`` is true, clips marked page_review in app.samples
+    may page Review after the session motion sketch is confident.
+    """
+
+    page_review: bool = False
+
+
+@dataclass
+class JevConfig:
+    """Optional TypeSafe Jev page/suppress gate (structured state only).
+
+    Remote calls require `allow_cloud: true` (same spirit as `vision.allow_cloud`)
+    plus OPENROUTER_API_KEY or TYPESAFE_API_KEY. Fail-open when disabled,
+    denied, or unreachable — pipeline keeps the Verify path.
+    """
+
+    enabled: bool = False
+    allow_cloud: bool = False
+    provider: str = "openrouter"
+    model: str = "typesafe/jev-1.13"
+    base_url: str = "https://openrouter.ai/api/alpha/decisions"
+    timeout_seconds: float = 2.0
+    page_threshold: float = 0.75
+    suppress_threshold: float = 0.35
+    dry_run: bool = False
+    api_key: str = ""
+    instructions: str = (
+        "Should this fixed building-camera trip page a human operator for review?"
+    )
+    criteria: dict[str, str] = field(
+        default_factory=lambda: {
+            "true": (
+                "Unattended bag, after-hours person without badge, intrusion, "
+                "drone/airplane near the building, or clearly unusual activity "
+                "worth interrupting an operator."
+            ),
+            "false": (
+                "Ordinary doorway traffic, expected vehicles or pedestrians for "
+                "this camera, learning/sketch noise, or activity that should stay suppressed."
+            ),
+        }
+    )
+
+
+
+@dataclass
 class TargetModels:
     """Roadmap model at each seat vs what this process actually loads."""
 
     edge: str = "OpenCV + Pattern of Life (no neural net)"
-    node: str = "RF-DETR"
-    hub: str = "Moondream 3"
+    node: str = "YOLOv8n"
+    hub: str = "Moondream"
 
 
 @dataclass
@@ -215,7 +261,9 @@ class AppConfig:
     mqtt: MqttSettings
     embed: EmbedConfig
     escalation: EscalationConfig
+    jev: JevConfig
     targets: TargetModels
+    demo: DemoConfig = field(default_factory=DemoConfig)
     zones: list[ZoneConfig] = field(default_factory=list)
     root: Path = ROOT
 
@@ -298,11 +346,18 @@ def load_config(path: Path | None = None) -> AppConfig:
     mqtt_raw = raw.get("mqtt") or {}
     embed_raw = raw.get("embed") or {}
     escalation_raw = raw.get("escalation") or {}
+    jev_raw = raw.get("jev") or {}
     targets_raw = raw.get("targets") or {}
+    demo_raw = raw.get("demo") or {}
 
     provider = str(vision_raw.get("provider", "local")).strip().lower()
     if provider in {"auto", "none", "false"}:
         provider = "local"
+
+    jev_provider = str(jev_raw.get("provider", "openrouter")).strip().lower() or "openrouter"
+    jev_criteria = jev_raw.get("criteria")
+    if not isinstance(jev_criteria, dict) or not jev_criteria:
+        jev_criteria = None
 
     cfg = AppConfig(
         camera=CameraConfig(
@@ -325,11 +380,32 @@ def load_config(path: Path | None = None) -> AppConfig:
         ),
         detection=DetectionConfig(
             model=str(detection_raw.get("model", "yolov8n.pt")),
-            conf=float(detection_raw.get("conf", 0.4)),
+            conf=float(detection_raw.get("conf", 0.45)),
             classes=list(detection_raw.get("classes") or BUILDING_CLASSES),
             device=str(detection_raw.get("device", "cpu")),
             drone_model=str(detection_raw.get("drone_model") or ""),
             drone_conf=float(detection_raw.get("drone_conf", 0.55)),
+            min_box_area_frac=float(detection_raw.get("min_box_area_frac", 0.0012)),
+            min_side_px=int(detection_raw.get("min_side_px", 24)),
+            edge_margin_frac=float(detection_raw.get("edge_margin_frac", 0.02)),
+            edge_reject=bool(detection_raw.get("edge_reject", True)),
+            class_conf={
+                str(k): float(v)
+                for k, v in (
+                    detection_raw.get("class_conf")
+                    or {
+                        "car": 0.55,
+                        "truck": 0.55,
+                        "bus": 0.55,
+                        "motorcycle": 0.5,
+                        "bicycle": 0.5,
+                        "person": 0.45,
+                        "airplane": 0.55,
+                        "drone": 0.55,
+                    }
+                ).items()
+            },
+            primary_track_boxes=bool(detection_raw.get("primary_track_boxes", True)),
         ),
         events=EventsConfig(
             pre_seconds=float(events_raw.get("pre_seconds", 2)),
@@ -361,20 +437,18 @@ def load_config(path: Path | None = None) -> AppConfig:
             policy=str(vision_raw.get("policy") or VisionConfig.policy),
         ),
         monitoring=MonitoringConfig(
-            expected_classes=list(monitoring_raw.get("expected_classes") or EXPECTED_CLASSES),
-            alert_classes=list(monitoring_raw.get("alert_classes") or ALERT_CLASSES),
             unattended_bags=bool(monitoring_raw.get("unattended_bags", True)),
             bag_dwell_seconds=float(monitoring_raw.get("bag_dwell_seconds", 8)),
             bag_person_radius=float(monitoring_raw.get("bag_person_radius", 120)),
         ),
         tracking=TrackingConfig(
             max_age_s=float(tracking_raw.get("max_age_s") or tracking_raw.get("max_age") or 15),
-            min_hits=int(tracking_raw.get("min_hits", 2)),
+            min_hits=int(tracking_raw.get("min_hits", 3)),
             iou_match=float(tracking_raw.get("iou_match", 0.3)),
             dedup_seconds=float(tracking_raw.get("dedup_seconds", 8)),
         ),
         fusion=FusionConfig(
-            enabled=bool(fusion_raw.get("enabled", True)),
+            enabled=bool(fusion_raw.get("enabled", False)),
             badge_window_seconds=float(fusion_raw.get("badge_window_seconds", 60)),
             fixture=str(fusion_raw.get("fixture") or "data/fusion/badges.jsonl"),
         ),
@@ -385,18 +459,39 @@ def load_config(path: Path | None = None) -> AppConfig:
             prefix=str(mqtt_raw.get("prefix") or "tundranvr"),
         ),
         embed=EmbedConfig(
-            enabled=bool(embed_raw.get("enabled", True)),
+            enabled=bool(embed_raw.get("enabled", False)),
             knn=int(embed_raw.get("knn", 5)),
-            gate_alerts=bool(embed_raw.get("gate_alerts", False)),
         ),
         escalation=EscalationConfig(
             mode=_escalation_mode(escalation_raw.get("mode")),
             pol_score_min=float(escalation_raw.get("pol_score_min", 0.7)),
         ),
+        jev=JevConfig(
+            enabled=bool(jev_raw.get("enabled", False)),
+            allow_cloud=bool(jev_raw.get("allow_cloud", False)),
+            provider=jev_provider,
+            model=str(jev_raw.get("model") or "typesafe/jev-1.13"),
+            base_url=str(
+                jev_raw.get("base_url")
+                or "https://openrouter.ai/api/alpha/decisions"
+            ),
+            timeout_seconds=float(jev_raw.get("timeout_seconds", 2.0)),
+            page_threshold=float(jev_raw.get("page_threshold", 0.75)),
+            suppress_threshold=float(jev_raw.get("suppress_threshold", 0.35)),
+            dry_run=bool(jev_raw.get("dry_run", False)),
+            api_key=str(jev_raw.get("api_key") or "").strip(),
+            instructions=str(
+                jev_raw.get("instructions") or JevConfig.instructions
+            ),
+            criteria=dict(jev_criteria or JevConfig().criteria),
+        ),
         targets=TargetModels(
             edge=str(targets_raw.get("edge") or TargetModels.edge),
             node=str(targets_raw.get("node") or TargetModels.node),
             hub=str(targets_raw.get("hub") or TargetModels.hub),
+        ),
+        demo=DemoConfig(
+            page_review=bool(demo_raw.get("page_review", False)),
         ),
         zones=_zones(raw.get("zones") or []),
         root=ROOT,
@@ -463,6 +558,12 @@ def public_settings(cfg: AppConfig) -> dict[str, Any]:
         "model": cfg.detection.model,
         "vision": effective_provider(cfg.vision) if cfg.vision.enabled else "off",
         "allow_cloud": bool(cfg.vision.allow_cloud),
+        "jev": {
+            "enabled": bool(cfg.jev.enabled),
+            "allow_cloud": bool(cfg.jev.allow_cloud),
+            "provider": cfg.jev.provider,
+            "dry_run": bool(cfg.jev.dry_run),
+        },
         "auth_required": bool(cfg.server.api_token),
         "escalation": cfg.escalation.mode,
         "targets": {

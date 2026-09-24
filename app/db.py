@@ -217,6 +217,7 @@ class EventStore:
         operator_status: str | None = None,
         stopped_at: str | None = None,
         paged_because: str | None = None,
+        features_patch: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         with self._lock:
             row = self._conn.execute(
@@ -259,6 +260,11 @@ class EventStore:
             if paged_because is not None:
                 fields.append("paged_because = ?")
                 values.append(paged_because or None)
+            if features_patch:
+                merged = dict(current.get("features") or {})
+                merged.update(features_patch)
+                fields.append("features = ?")
+                values.append(json.dumps(merged))
             values.append(event_id)
             self._conn.execute(
                 f"UPDATE events SET {', '.join(fields)} WHERE id = ?",

@@ -18,7 +18,24 @@ motion:
 
 detection:
   model: yolov8n.pt
-  conf: 0.5
+  # YOLO predict floor; class_conf raises vehicle floors after predict.
+  conf: 0.45
+  # Drop parking-line / shadow / frame-edge ghosts before tracking.
+  min_box_area_frac: 0.0012
+  min_side_px: 24
+  edge_margin_frac: 0.02
+  edge_reject: true
+  class_conf:
+    car: 0.55
+    truck: 0.55
+    bus: 0.55
+    motorcycle: 0.5
+    bicycle: 0.5
+    person: 0.45
+    airplane: 0.55
+    drone: 0.55
+  # Review cards label the trip track, not every coincident FP in the frame.
+  primary_track_boxes: true
   classes:
     - person
     - bicycle
@@ -34,14 +51,17 @@ detection:
     - suitcase
     - umbrella
     - skateboard
-    - airplane
-    - drone
   device: cpu
+  # Stock YOLOv8n has no drone class. Secondary UAV weights from
+  # scripts/download_sample.py (drone-yolo.pt). Empty = skip.
+  drone_model: drone-yolo.pt
+  drone_conf: 0.55
 
 tracking:
-  # Wall-clock seconds since last Detect observe. Was tick-count `max_age`.
+  # Wall-clock seconds since last Detect observe.
   max_age_s: 15
-  min_hits: 2
+  # Need a second confirm before naming — cuts one-frame pavement ghosts.
+  min_hits: 3
   iou_match: 0.3
   dedup_seconds: 8
 
@@ -63,16 +83,24 @@ server:
 
 escalation:
   # auto: recall while Verify is healthy, else pol_score.
-  # recall: any plausible Detect trip goes to Verify (eval / healthy suppressor).
-  # pol_score: legacy gate on Pattern of Life score ≥ pol_score_min.
+  # recall: any Detect trip goes to Verify.
+  # pol_score: Edge unusual-score gate when Verify is down.
   mode: auto
   pol_score_min: 0.7
 
-# Roadmap model at each seat. `running` in /health is what this process loads.
+# Showcase demos only. Sample/fixture never absorb into Pattern of Life.
+# When page_review is true, allowlisted clips (lobby / package / courtyard /
+# drones — see app/samples.py) may page Review after the session sketch is
+# confident. Default false keeps anonymous looping files off the operator shelf.
+demo:
+  page_review: false
+
+# What this process actually loads. Not a roadmap.
+
 targets:
   edge: OpenCV + Pattern of Life (no neural net)
-  node: RF-DETR
-  hub: Moondream 3
+  node: YOLOv8n
+  hub: Moondream
 
 vision:
   enabled: true
@@ -85,11 +113,27 @@ vision:
   audit_rate: 0.03
   verify_fresh_seconds: 120
   policy: >
-    Fixed building camera. Alert on unattended bags and after-hours people
-    with no badge in the last minute. Ordinary doorway traffic is normal.
+    Fixed building camera. Alert on unattended bags and after-hours people.
+    Ordinary doorway traffic is normal.
 
+# Optional TypeSafe Jev page/suppress gate (spike). Structured trip state only
+# — never frames. Remote calls need allow_cloud: true plus OPENROUTER_API_KEY
+# (or TYPESAFE_API_KEY). Fail-open when disabled / denied / unreachable.
+# provider: openrouter | mock  (mock = offline deterministic path for smoke)
+jev:
+  enabled: false
+  allow_cloud: false
+  provider: openrouter
+  model: typesafe/jev-1.13
+  base_url: https://openrouter.ai/api/alpha/decisions
+  timeout_seconds: 2.0
+  page_threshold: 0.75
+  suppress_threshold: 0.35
+  dry_run: false
+
+# Side channels remain off the decision path (cascade freeze).
 fusion:
-  enabled: true
+  enabled: false
   badge_window_seconds: 60
   fixture: data/fusion/badges.jsonl
 
@@ -100,33 +144,16 @@ mqtt:
   prefix: tundranvr
 
 embed:
-  enabled: true
+  enabled: false
   knn: 5
   gate_alerts: false
+
 
 zones:
   - name: doorway
     polygon: [[0.0, 0.35], [1.0, 0.35], [1.0, 1.0], [0.0, 1.0]]
 
 monitoring:
-  expected_classes:
-    - person
-    - bicycle
-    - car
-    - motorcycle
-    - bus
-    - truck
-    - backpack
-    - handbag
-    - suitcase
-    - umbrella
-    - dog
-    - cat
-    - bird
-    - skateboard
-  alert_classes:
-    - drone
-    - airplane
   unattended_bags: true
   bag_dwell_seconds: 8
   bag_person_radius: 120

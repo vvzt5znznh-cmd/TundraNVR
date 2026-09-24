@@ -6,7 +6,6 @@ import logging
 import os
 import urllib.error
 import urllib.request
-from pathlib import Path
 
 from app.config import VisionConfig
 
@@ -23,8 +22,6 @@ def fallback_summary(
         return "Motion was detected, but no allow-listed object was named."
     if anomaly_reason:
         return f"Detected {labels} (score {score:.2f}). {anomaly_reason}."
-    if "drone" in classes:
-        return f"Detected {labels} (score {score:.2f}). A drone near a building is worth an alert."
     if {"person"} & set(classes):
         kind = "ordinary foot traffic around the building"
     else:
@@ -66,31 +63,6 @@ def complete_vision(cfg: VisionConfig, jpeg: bytes, prompt: str) -> tuple[str | 
             return text, "openai", "ok"
         return None, "openai", "unavailable"
     return None, provider, "unavailable"
-
-
-def describe_event(
-    cfg: VisionConfig,
-    thumb: Path,
-    classes: list[str],
-    score: float,
-    anomaly_reason: str = "",
-) -> tuple[str, str]:
-    """Search-facing caption only. Never the alert decision."""
-    fallback = fallback_summary(classes, score, anomaly_reason)
-    if not thumb.is_file():
-        return fallback, "fallback"
-    jpeg = thumb.read_bytes()
-    prompt = (
-        "You are looking at a still from a fixed building CCTV camera. "
-        f"Detected objects: {', '.join(classes) or 'none'}. "
-        f"Anomaly flag: {anomaly_reason or 'none'}. "
-        "In 2-3 short sentences say what is in the frame and what it is doing. "
-        "Do not mention models."
-    )
-    text, provider, status = complete_vision(cfg, jpeg, prompt)
-    if text and status == "ok":
-        return text, provider
-    return fallback, status if status != "ok" else "fallback"
 
 
 def _ollama(cfg: VisionConfig, jpeg: bytes, prompt: str) -> str | None:

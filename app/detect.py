@@ -62,23 +62,35 @@ def _resolve_model(name: str) -> str:
 
 
 class ObjectDetector:
-    """YOLO namer. Call only on Edge trips — never as a motion sensor."""
+    """YOLO namer. Call only on Edge trips — never as a motion sensor.
+
+    Stock YOLOv8n has ``airplane`` but no ``drone`` class. When
+    ``drone_model`` is set (e.g. ``drone-yolo.pt``), a second pass merges
+    UAV detections. Airplane from the primary model still maps as itself.
+    """
 
     def __init__(
         self,
         model: str = "yolov8n.pt",
-        conf: float = 0.4,
+        conf: float = 0.45,
         classes: list[str] | None = None,
         device: str = "cpu",
+        drone_model: str = "",
+        drone_conf: float = 0.55,
     ) -> None:
         self.model_name = model
         self.conf = conf
         self.allowed = {normalize_class(name) for name in (classes or ["person", "car", "dog", "cat"])}
-        self.allowed.add("drone")
         self.device = device
+        self.drone_model_name = (drone_model or "").strip()
+        self.drone_conf = float(drone_conf)
         self._model = None
         self._names: dict[int, str] = {}
         self._class_ids: list[int] | None = None
+        self._drone = None
+        self._drone_names: dict[int, str] = {}
+        self._drone_ids: list[int] | None = None
+        self._drone_load_failed = False
 
     def load(self) -> None:
         if self._model is not None:
@@ -99,10 +111,58 @@ class ObjectDetector:
             log.warning("No YOLO classes matched allowlist %s", sorted(self.allowed))
             self._class_ids = None
         log.info("YOLO namer ready; filtering classes %s", self._class_ids)
+        self._load_drone(YOLO)
+
+    def _load_drone(self, YOLO) -> None:
+        if not self.drone_model_name or self._drone is not None or self._drone_load_failed:
+            return
+        path = _resolve_model(self.drone_model_name)
+        if not Path(path).is_file():
+            log.warning(
+                "drone_model %s not found; UAV secondary detector skipped "
+                "(stock YOLO has no drone class — run scripts/download_sample.py)",
+                self.drone_model_name,
+            )
+            self._drone_load_failed = True
+            return
+        try:
+            log.info("Loading drone namer %s on %s", path, self.device)
+            self._drone = YOLO(path)
+            raw = self._drone.names
+            self._drone_names = {int(k): str(v) for k, v in raw.items()}
+            self._drone_ids = [
+                idx
+                for idx, name in self._drone_names.items()
+                if normalize_class(name) == "drone" or name.lower() in DRONE_ALIASES
+            ]
+            if not self._drone_ids:
+                # Some fine-tunes use a single class id 0 named oddly — keep all.
+                self._drone_ids = None
+                log.warning(
+                    "Drone model class names %s — running unfiltered; normalizing to drone",
+                    sorted(self._drone_names.values()),
+                )
+            else:
+                log.info("Drone namer ready; class ids %s", self._drone_ids)
+        except Exception:
+            log.exception("Failed to load drone_model %s", self.drone_model_name)
+            self._drone = None
+            self._drone_load_failed = True
 
     def detect(self, frame: np.ndarray) -> list[Detection]:
         self.load()
-        return self._predict(self._model, frame, self.conf, self._names, self._class_ids)
+        detections = self._predict(self._model, frame, self.conf, self._names, self._class_ids)
+        if self._drone is not None:
+            drone_hits = self._predict(
+                self._drone,
+                frame,
+                self.drone_conf,
+                self._drone_names,
+                self._drone_ids,
+                force_drone=True,
+            )
+            detections.extend(drone_hits)
+        return detections
 
     def _predict(
         self,
@@ -111,6 +171,8 @@ class ObjectDetector:
         conf: float,
         names: dict[int, str],
         class_ids: list[int] | None,
+        *,
+        force_drone: bool = False,
     ) -> list[Detection]:
         kwargs: dict = {
             "source": frame,
@@ -130,7 +192,10 @@ class ObjectDetector:
         for box in result.boxes:
             cls_id = int(box.cls[0])
             raw = names.get(cls_id, str(cls_id)).lower()
-            name = "drone" if raw in DRONE_ALIASES else normalize_class(raw)
+            if force_drone:
+                name = "drone"
+            else:
+                name = "drone" if raw in DRONE_ALIASES else normalize_class(raw)
             if name not in self.allowed:
                 continue
             xyxy = box.xyxy[0].tolist()

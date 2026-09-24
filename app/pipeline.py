@@ -15,14 +15,23 @@ import numpy as np
 from app.config import AppConfig
 from app.db import EventStore, utc_now
 from app.detect import Detection, ObjectDetector, boxes_payload, draw_overlay
+from app.detect_filters import (
+    BoxFilterConfig,
+    filter_detections,
+    focus_detections,
+    idle_seed_detections,
+    motion_gate_detections,
+)
 from app.embed import EmbeddingIndex, thumb_hist
 from app.escalate import decide_hub, effective_mode
 from app.fusion import FusionBus, clock_context
+from app.jev_gate import JevStats, build_trip_state, decide_page_gate
 from app.motion import MotionDetector
 from app.mqtt_bus import MqttBus, MqttConfig
 from app.page import choose_paged_because
 from app.pol import PatternOfLife, absorb_into_file, source_key
 from app.record import ClipWriter, NullWriter, cleanup_old_events, save_thumb
+from app.samples import bundled_sample, demo_clips, is_sample_path, page_review_allowed
 from app.security import redact_source
 from app.situation import situation_lines
 from app.tiers import SEAT_LABELS, models_payload
@@ -56,39 +65,6 @@ def _placeholder_jpeg(width: int, height: int, quality: int) -> bytes:
         cv2.LINE_AA,
     )
     return _encode_jpeg(frame, quality)
-
-
-def bundled_sample(root: Path) -> Path | None:
-    names = ("street.mp4", "indoor.mp4", "package.mp4", "drone.mp4", "sample.mp4", "entrance.mp4")
-    dirs = (root / "data" / "samples", root / "data")
-    for folder in dirs:
-        for name in names:
-            path = folder / name
-            if path.is_file() and path.stat().st_size > 10_000:
-                return path
-    return None
-
-
-DEMO_CLIPS = (
-    ("street", "Street — people, bikes, cars", "street.mp4"),
-    ("indoor", "Indoor — pedestrians", "indoor.mp4"),
-    ("package", "Left bag — unattended bag", "package.mp4"),
-)
-
-
-def demo_clips(root: Path) -> list[dict]:
-    out: list[dict] = []
-    for cid, label, name in DEMO_CLIPS:
-        path = root / "data" / "samples" / name
-        out.append(
-            {
-                "id": cid,
-                "label": label,
-                "path": f"data/samples/{name}",
-                "present": path.is_file() and path.stat().st_size > 10_000,
-            }
-        )
-    return out
 
 
 @dataclass
@@ -156,6 +132,16 @@ class Pipeline:
             conf=cfg.detection.conf,
             classes=cfg.detection.classes,
             device=cfg.detection.device,
+            drone_model=cfg.detection.drone_model,
+            drone_conf=cfg.detection.drone_conf,
+        )
+        self._box_filter = BoxFilterConfig(
+            conf=cfg.detection.conf,
+            class_conf=dict(cfg.detection.class_conf or {}),
+            min_box_area_frac=cfg.detection.min_box_area_frac,
+            min_side_px=cfg.detection.min_side_px,
+            edge_margin_frac=cfg.detection.edge_margin_frac,
+            edge_reject=cfg.detection.edge_reject,
         )
         self.tracker = ByteTracker(
             max_age=cfg.tracking.max_age_s,
@@ -220,6 +206,7 @@ class Pipeline:
         self.audit_shown = 0
         self.audit_confirmed = 0
         self._paged_counts: dict[str, int] = {}
+        self.jev_stats = JevStats()
         placeholder = _placeholder_jpeg(
             cfg.camera.width, cfg.camera.height, cfg.pipeline.jpeg_quality
         )
@@ -238,7 +225,7 @@ class Pipeline:
         self._situation: list[str] = []
         self._seen_track_ids: set[int] = set()
         self.escalation_counts = {
-            "raspberry_trips": 0,
+            "edge_trips": 0,
             "node_proposals": 0,
             "hub_handoffs": 0,
             "hub_alerts": 0,
@@ -276,7 +263,7 @@ class Pipeline:
     def latest_jpeg(self, seat: str = "node") -> bytes:
         with self._lock:
             key = (seat or "node").lower()
-            if key in {"edge", "raspberry"}:
+            if key == "edge":
                 return self._jpeg_edge or self._latest_jpeg
             if key == "hub":
                 return self._jpeg_hub or self._latest_jpeg
@@ -295,7 +282,7 @@ class Pipeline:
                 }
                 for t in self._live_tracks
             ]
-            rasp = self.escalation_counts["raspberry_trips"]
+            edge = self.escalation_counts["edge_trips"]
             node = self.escalation_counts["node_proposals"]
             hub_h = self.escalation_counts["hub_handoffs"]
             hub_a = self.escalation_counts["hub_alerts"]
@@ -322,22 +309,27 @@ class Pipeline:
                 "model": self.cfg.detection.model,
                 "vision": self.status.verifier_provider,
                 "allow_cloud": bool(self.cfg.vision.allow_cloud),
+                "jev": self.jev_stats.health(self.cfg.jev),
                 "yolo_ran": self.status.yolo_ran,
                 "tracks": tracks,
                 "situation": list(self._situation),
                 "demo_clips": demo_clips(self.cfg.root),
+                "demo": {
+                    "page_review": bool(self.cfg.demo.page_review),
+                    "showcase_active": self._showcase_paging(),
+                },
                 "last_error": self.status.last_error,
                 "reconnects": self.status.reconnects,
                 "uptime_s": round(uptime, 1),
                 "escalation": {
                     "mode": mode_cfg,
                     "mode_effective": mode_eff,
-                    "raspberry_trips": rasp,
+                    "edge_trips": edge,
                     "node_proposals": node,
                     "hub_handoffs": hub_h,
                     "hub_alerts": hub_a,
                     "operator_confirms": confirms,
-                    "node_per_raspberry": round(node / rasp, 3) if rasp else 0.0,
+                    "node_per_edge": round(node / edge, 3) if edge else 0.0,
                     "hub_per_node": round(hub_h / node, 3) if node else 0.0,
                     "alerts_per_hub": round(hub_a / hub_h, 3) if hub_h else 0.0,
                     "paged_because": dict(self._paged_counts),
@@ -359,7 +351,10 @@ class Pipeline:
                     edge_active=self.status.last_motion,
                 ),
                 "auth_required": bool(self.cfg.server.api_token),
-                "fallback": self._demo(),
+                "fallback": self._fallback,
+                "sample": bool(
+                    self._fallback or is_sample_path(self.cfg.root, self._active_source)
+                ),
             }
 
     def _verify_healthy(self) -> bool:
@@ -369,14 +364,24 @@ class Pipeline:
         return redact_source(self.cfg.camera.source)
 
     def _demo(self) -> bool:
-        return bool(self._fallback or self._source_is_file(self._active_source))
+        """Sample/fixture loop — cascade cards say demo, not live-alarm red."""
+        return bool(self._fallback or is_sample_path(self.cfg.root, self._active_source))
 
     def _provenance(self) -> str:
         if self._ingest_kind == "fixture":
             return "fixture"
-        if self._demo():
+        if self._fallback or is_sample_path(self.cfg.root, self._active_source):
             return "sample"
         return "live"
+
+    def _showcase_paging(self) -> bool:
+        """Explicit demo opt-in: allowlisted sample clip may page Review."""
+        if not self.cfg.demo.page_review:
+            return False
+        if not (self._fallback or is_sample_path(self.cfg.root, self._active_source)):
+            return False
+        name = Path(str(self._active_source)).name
+        return page_review_allowed(name)
 
     def ingest_frame(self, frame: np.ndarray, now: float | None = None) -> None:
         """Offline/eval entry: one resized frame through detect + track."""
@@ -478,7 +483,11 @@ class Pipeline:
         cap = self._try_open(source)
         if cap is not None:
             self._active_source = source
-            self._file_loop = self._source_is_file(source)
+            sample_file = is_sample_path(self.cfg.root, source)
+            self._file_loop = self._source_is_file(source) and (
+                bool(self.cfg.camera.loop_file) or sample_file
+            )
+            # Explicit sample path is still sample provenance (not live PoL).
             self._fallback = False
             with self._lock:
                 self.status.source = str(source)
@@ -661,7 +670,10 @@ class Pipeline:
         if idle_due:
             self._last_idle_detect = now
         provenance = self._provenance()
-        can_page = provenance == "live" and bool(pol.confident)
+        showcase = self._showcase_paging()
+        can_page = (provenance == "live" and bool(pol.confident)) or (
+            provenance == "sample" and showcase and bool(pol.confident)
+        )
         detections: list[Detection] = []
         yolo_ran = False
         tracks: list[Track] = []
@@ -674,6 +686,24 @@ class Pipeline:
                 with self._lock:
                     self.status.last_error = f"detect: {exc}"
             h, w = frame.shape[:2]
+            detections = filter_detections(detections, (w, h), self._box_filter)
+            existing = [tr.xyxy for tr in self.tracker.tracks.values()]
+            if edge_trip:
+                # Drop vehicle/person boxes that miss the motion blob (pavement ghosts).
+                detections = motion_gate_detections(
+                    detections,
+                    (w, h),
+                    grid,
+                    existing,
+                    iou_match=float(self.cfg.tracking.iou_match),
+                )
+            else:
+                # Idle sweep keeps still bags/people; do not seed vehicle pavement FPs.
+                detections = idle_seed_detections(
+                    detections,
+                    existing,
+                    iou_match=float(self.cfg.tracking.iou_match),
+                )
             tracks = self.tracker.update(
                 detections,
                 now,
@@ -706,7 +736,6 @@ class Pipeline:
             )
         node_received = run_detect
         named = bool(tracks) or bool(detections)
-        no_badge = bool(fusion and not fusion.badge_within_window)
         decision = decide_hub(
             mode=self.cfg.escalation.mode,
             node_received=node_received,
@@ -715,7 +744,6 @@ class Pipeline:
             pol_confident=pol.confident,
             pol_score=pol.score,
             pol_min=self.cfg.escalation.pol_score_min,
-            no_badge=no_badge,
             verify_healthy=self._verify_healthy(),
         )
         hub_needed = decision.hub_needed and can_page
@@ -723,7 +751,7 @@ class Pipeline:
         page_operator = hub_needed and can_page
         anomaly_reason = decision.reason if page_operator else ""
         if run_detect and edge_trip:
-            self.escalation_counts["raspberry_trips"] += 1
+            self.escalation_counts["edge_trips"] += 1
         peak = max((d.conf for d in detections), default=0.0)
         labels = sorted({t.cls for t in tracks} | {d.cls for d in detections})
         hub_detail = fallback_summary(labels, peak, anomaly_reason) if hub_needed else ""
@@ -798,7 +826,7 @@ class Pipeline:
                     self._touch_track_event(
                         frame,
                         tr,
-                        overlay_dets,
+                        self._event_label_dets(overlay_dets, tr.track_id),
                         now,
                         hub_needed=need,
                         page_operator=need and can_page,
@@ -854,6 +882,37 @@ class Pipeline:
                 self.status.last_handoff = handoff
         _ = live_ids
 
+    def _event_label_dets(
+        self,
+        detections: list[Detection],
+        track_id: int | None,
+    ) -> list[Detection]:
+        """Boxes drawn on Review thumbs / stored on the event.
+
+        Live Detect/Verify overlays still show all confirmed tracks; Review cards
+        prefer the trip/primary track so coincident pavement FPs do not pile on.
+        """
+        if not self.cfg.detection.primary_track_boxes:
+            return list(detections)
+        return focus_detections(detections, track_id)
+
+    def _stamp_event_boxes(
+        self,
+        features: dict,
+        detections: list[Detection],
+        frame: np.ndarray | None = None,
+    ) -> dict:
+        feats = dict(features or {})
+        if frame is not None:
+            h, w = frame.shape[:2]
+        else:
+            frame_meta = feats.get("frame") or {}
+            w = int(frame_meta.get("w") or self.cfg.camera.width or 1280)
+            h = int(frame_meta.get("h") or self.cfg.camera.height or 720)
+        feats["frame"] = {"w": int(w), "h": int(h)}
+        feats["boxes"] = boxes_payload(detections, (w, h))
+        return feats
+
     def _persist_track(self, tr: Track, frame_h: int, now: float | None = None) -> None:
         feat = tr.features(frame_h, now)
         self.store.upsert_track(
@@ -897,7 +956,7 @@ class Pipeline:
                 existing.anomaly_reason = kwargs["anomaly_reason"]
             existing.pol_score = max(existing.pol_score, kwargs["pol_score"])
             existing.handoff = kwargs["handoff"]
-            existing.features = kwargs["features"]
+            existing.features = self._stamp_event_boxes(kwargs["features"], detections, frame)
             existing.last_frame = frame.copy()
             existing.last_dets = detections
             existing.fusion = kwargs.get("fusion") or {}
@@ -999,7 +1058,7 @@ class Pipeline:
             pol_score=pol_score,
             stopped_at=stopped_at,
             handoff=handoff,
-            features=features,
+            features=self._stamp_event_boxes(features, detections, frame),
             source=self._source_stored(),
             track_id=track_id,
             last_frame=frame.copy(),
@@ -1053,6 +1112,7 @@ class Pipeline:
             bag=active.bag,
             unusual=active.unusual,
             named=active.named,
+            demo_paging=self._showcase_paging(),
         )
         active.features = dict(active.features or {})
         active.features["paged_because"] = paged_because
@@ -1124,7 +1184,29 @@ class Pipeline:
             },
         )
         if event_id and active.hub_needed and active.can_page:
-            self._run_verifier(event_id, active, classes, score, anomaly_reason, rule_alert)
+            jev_result = self._run_jev_gate(active, classes, score, anomaly_reason)
+            if jev_result.action == "suppress" and jev_result.applied:
+                self._apply_jev_suppress(
+                    event_id, active, classes, score, anomaly_reason, jev_result
+                )
+            elif jev_result.action == "page" and jev_result.applied:
+                self._apply_jev_page(
+                    event_id, active, classes, score, anomaly_reason, jev_result
+                )
+            else:
+                if jev_result.status not in {"disabled"}:
+                    # Record that Jev deferred to Verify (or failed open).
+                    prior = self.store.get(event_id) or {}
+                    self.store.update_verdict(
+                        event_id,
+                        summary=str(prior.get("summary") or ""),
+                        anomaly=bool(prior.get("anomaly")),
+                        anomaly_reason=str(prior.get("anomaly_reason") or ""),
+                        verifier_provider=str(prior.get("verifier_provider") or ""),
+                        verifier_status=str(prior.get("verifier_status") or ""),
+                        features_patch={"jev": jev_result.as_dict()},
+                    )
+                self._run_verifier(event_id, active, classes, score, anomaly_reason, rule_alert)
         elif event_id:
             self._paged_counts[paged_because] = self._paged_counts.get(paged_because, 0) + 1
             self.store.update_verdict(
@@ -1144,6 +1226,134 @@ class Pipeline:
             cleanup_old_events(self.store, self.cfg.data_dir, self.cfg.events.retention_days)
         except Exception:
             log.exception("Retention cleanup failed")
+
+    def _run_jev_gate(
+        self,
+        active: _ActiveEvent,
+        classes: list[str],
+        score: float,
+        anomaly_reason: str,
+    ):
+        feats = active.features or {}
+        fusion = active.fusion or {}
+        badge = fusion.get("badge_within_window")
+        state = build_trip_state(
+            classes=classes,
+            score=score,
+            pol_score=float(active.pol_score),
+            dwell_s=feats.get("dwell_s"),
+            zone=str(feats.get("zone") or ""),
+            bag=bool(active.bag),
+            named=bool(active.named),
+            unusual=bool(active.unusual),
+            learning=bool(active.learning),
+            no_badge=badge is False,
+            verify_healthy=self._verify_healthy(),
+            anomaly_reason=anomaly_reason,
+            situation=list(self._situation),
+            provenance=active.provenance,
+            mode_effective=str(getattr(active, "mode_effective", "") or ""),
+        )
+        try:
+            result = decide_page_gate(self.cfg.jev, state)
+        except Exception as exc:
+            log.warning("Jev gate crashed; fail-open: %s", exc)
+            from app.jev_gate import rule_fallback
+
+            result = rule_fallback(reason=f"jev crash: {exc}")
+        self.jev_stats.record(result)
+        active.features = dict(active.features or {})
+        active.features["jev"] = result.as_dict()
+        active.features["jev_state_keys"] = sorted(state.keys())
+        log.info(
+            "Jev gate action=%s status=%s noul=%s applied=%s",
+            result.action,
+            result.status,
+            result.noul,
+            result.applied,
+        )
+        return result
+
+    def _apply_jev_suppress(
+        self,
+        event_id: int,
+        active: _ActiveEvent,
+        classes: list[str],
+        score: float,
+        anomaly_reason: str,
+        jev_result,
+    ) -> None:
+        summary = fallback_summary(classes, score, anomaly_reason)
+        summary = f"{summary} Jev suppressed (noul={jev_result.noul})."
+        paged_because = choose_paged_because(
+            provenance=active.provenance,
+            learning=active.learning,
+            bag=active.bag,
+            unusual=active.unusual,
+            named=active.named,
+            jev_action="suppress",
+        )
+        self.store.update_verdict(
+            event_id,
+            summary=summary,
+            anomaly=False,
+            anomaly_reason=jev_result.reason,
+            verifier_provider=f"jev:{jev_result.provider}",
+            verifier_status="jev-suppress",
+            operator_status="",
+            stopped_at="hub",
+            paged_because=paged_because,
+            features_patch={"jev": jev_result.as_dict()},
+        )
+        self._paged_counts[paged_because] = self._paged_counts.get(paged_because, 0) + 1
+        self.escalation_counts["hub_handoffs"] += 1
+        t0 = active.t0_mono or time.monotonic()
+        self.verdict_latencies_ms.append((time.monotonic() - t0) * 1000.0)
+        with self._lock:
+            self.status.last_scene = summary
+            self.status.last_anomaly = ""
+
+    def _apply_jev_page(
+        self,
+        event_id: int,
+        active: _ActiveEvent,
+        classes: list[str],
+        score: float,
+        anomaly_reason: str,
+        jev_result,
+    ) -> None:
+        """High-noul path: page operator without waiting on Verify suppress."""
+        summary = fallback_summary(classes, score, anomaly_reason)
+        summary = f"{summary} Jev gated page (noul={jev_result.noul})."
+        reason = anomaly_reason or jev_result.reason or "Jev page"
+        paged_because = choose_paged_because(
+            provenance=active.provenance,
+            learning=active.learning,
+            bag=active.bag,
+            unusual=active.unusual,
+            named=active.named,
+            jev_action="page",
+        )
+        self.store.update_verdict(
+            event_id,
+            summary=summary,
+            anomaly=True,
+            anomaly_reason=reason,
+            verifier_provider=f"jev:{jev_result.provider}",
+            verifier_status="jev-page",
+            operator_status="pending",
+            stopped_at="operator",
+            paged_because=paged_because,
+            features_patch={"jev": jev_result.as_dict()},
+        )
+        self._paged_counts[paged_because] = self._paged_counts.get(paged_because, 0) + 1
+        self.escalation_counts["hub_handoffs"] += 1
+        self.escalation_counts["hub_alerts"] += 1
+        t0 = active.t0_mono or time.monotonic()
+        self.verdict_latencies_ms.append((time.monotonic() - t0) * 1000.0)
+        with self._lock:
+            self.status.last_scene = summary
+            self.status.last_anomaly = reason
 
     def _is_dup(self, cls: str, detections: list[Detection], now: float) -> bool:
         window = max(1.0, float(self.cfg.tracking.dedup_seconds))
@@ -1165,11 +1375,20 @@ class Pipeline:
         feats["frame"] = {"w": int(w), "h": int(h)}
         feats["boxes"] = boxes_payload(detections, (w, h))
         detail = getattr(pol, "why", "") or pol.reason
-        if self._demo():
-            extra = (
-                "This host is looping a short demo file. The 16-cell motion sketch "
-                "fills in seconds; that is not a Pattern of Life. Review is not paged."
-            )
+        sampleish = self._fallback or is_sample_path(self.cfg.root, self._active_source)
+        if sampleish:
+            if self._showcase_paging():
+                extra = (
+                    "Showcase sample — Review paging is enabled for this clip "
+                    "(demo.page_review). The motion sketch is not a site Pattern of Life; "
+                    "Normal dismissals do not absorb into PoL."
+                )
+            else:
+                extra = (
+                    "This host is looping a demo file. The 16-cell motion sketch "
+                    "fills in seconds; that is not a Pattern of Life. Review is not paged "
+                    "unless demo.page_review is enabled for an allowlisted showcase clip."
+                )
             if extra not in detail:
                 detail = f"{detail} {extra}".strip()
         feats["why"] = {
@@ -1180,7 +1399,9 @@ class Pipeline:
             "visual_delta": round(float(pol.visual_delta), 3),
             "motion_spike": round(float(pol.motion_spike), 3),
             "learning": not bool(pol.confident),
-            "fallback": bool(self._demo()),
+            "fallback": bool(self._fallback),
+            "sample": bool(sampleish),
+            "showcase_paging": bool(self._showcase_paging()),
             "samples": int(pol.samples),
         }
 
@@ -1274,6 +1495,7 @@ class Pipeline:
             verify_status=verdict.status,
             alert=verdict.alert,
             audit=audit,
+            demo_paging=self._showcase_paging(),
         )
         if prior_status in {"confirmed", "dismissed"}:
             self.store.insert_disagreement(
