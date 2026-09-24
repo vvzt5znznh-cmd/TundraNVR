@@ -26,13 +26,19 @@
       n +
       " / " +
       need +
-      "). A real PoL takes days; a looping file fills this in seconds. Detect still runs; Review is not paged.",
+      "). A real PoL takes days; a looping file fills this in seconds. Detect still runs; Review is not paged by default.",
     polDemo: (n, need) =>
       "Looping demo file — " +
       n +
       " / " +
       need +
-      " cells sketched. That is not a site baseline. Review is not paged.",
+      " cells sketched. That is not a site baseline. Review is not paged by default.",
+    polShowcase: (n, need) =>
+      "Showcase sample — " +
+      n +
+      " / " +
+      need +
+      " cells sketched. demo.page_review is on for this allowlisted clip; Normal still does not absorb into PoL.",
     noAuth: "NO AUTH",
     verifyOffline: (hhmm) => "Verify offline since " + hhmm + " — unusual traffic goes to the Unverified shelf.",
     namerSub: "Detect names objects. It does not filter in recall mode.",
@@ -49,7 +55,7 @@
     emptyUnverified: "No unverified events.",
     unverified: "Unverified",
     setSource: "Set source",
-    sourcePh: "RTSP URL, file path, or camera index (0)",
+    sourcePh: "RTSP, camera index (0), or data/samples/street.mp4",
     switching: "Switching…",
     tokenCamera: "API token required to change the camera.",
     tokenReview: "API token required to review.",
@@ -99,8 +105,12 @@
     noMark: "No marked still for this event.",
     clip: "Clip",
     sampleWhy:
-      "This host is looping a short demo file. The 16-cell motion sketch fills in seconds; that is not a Pattern of Life. Review is not paged.",
-    sourcePh: "RTSP, camera index (0), or data/samples/street.mp4",
+      "This host is looping a demo file. The 16-cell motion sketch fills in seconds; that is not a Pattern of Life. Review is not paged unless demo.page_review is enabled for an allowlisted showcase clip.",
+    sampleWhyShowcase:
+      "Showcase sample with Review paging enabled (demo.page_review). Provenance stays sample — dismissals do not train Pattern of Life.",
+    demoHintOff:
+      "Showcase clips (Lobby, Left bag, Courtyard, Drones) page Review only when demo.page_review is true in config.yaml.",
+    demoHintOn: "demo.page_review is on — allowlisted showcase clips may page Review after the sketch fills.",
   };
 
   function esc(value) {
@@ -200,9 +210,9 @@
       for (let x = 0; x < cols; x++) {
         const motion = Number((g[y] || [])[x] || 0);
         const freq = Number((u[y] || [])[x] || 0);
-        let bg = "#1c2229";
-        if (freq > 0.08) bg = "rgba(61,186,140,0.38)";
-        if (motion > 0.12) bg = freq < 0.08 ? "rgba(240,113,103,0.78)" : "rgba(61,186,140,0.8)";
+        let bg = "#1a2a35";
+        if (freq > 0.08) bg = "rgba(47,191,155,0.38)";
+        if (motion > 0.12) bg = freq < 0.08 ? "rgba(229,115,106,0.78)" : "rgba(47,191,155,0.8)";
         html += `<i style="background:${bg}" title="usual ${freq.toFixed(2)} · now ${motion.toFixed(2)}"></i>`;
       }
     }
@@ -236,7 +246,8 @@
     const pol = data.pol || {};
     const edge = (data.handoff || {}).edge || {};
     const { need, n, pct, ready } = coverage(pol);
-    const demo = Boolean(data.fallback);
+    const demo = Boolean(data.fallback || data.sample);
+    const showcase = Boolean((data.demo || {}).showcase_active);
     const polPill = document.getElementById("polPill");
     if (polPill) {
       if (demo) {
@@ -247,7 +258,13 @@
         polPill.classList.toggle("wait", !ready);
       }
     }
-    const line = demo ? COPY.polDemo(n, need) : ready ? COPY.polMap(n) : COPY.polSketch(n, need);
+    const line = showcase
+      ? COPY.polShowcase(n, need)
+      : demo
+        ? COPY.polDemo(n, need)
+        : ready
+          ? COPY.polMap(n)
+          : COPY.polSketch(n, need);
     const polLine = document.getElementById("polLine");
     if (polLine) polLine.textContent = line;
     const polLineDetails = document.getElementById("polLineDetails");
@@ -272,10 +289,10 @@
         const dwell = d.dwell_s != null ? " " + d.dwell_s + "s" : "";
         const zone = d.zone ? " · " + d.zone : "";
         const conf = d.conf != null ? " " + Number(d.conf).toFixed(2) : "";
-        return `<span>${esc(id + (d.cls || "object") + conf + dwell + zone)}</span>`;
+        return `<span class="obj-chip">${esc(id + (d.cls || "object") + conf + dwell + zone)}</span>`;
       })
       .join("");
-    return extra ? html + `<span class="more">+${extra}</span>` : html;
+    return extra ? html + `<span class="obj-chip more">+${extra}</span>` : html;
   }
 
   function renderSituation(el, lines, seat) {
@@ -388,7 +405,7 @@
       const rows = [
         [
           "Motion map",
-          (data.fallback ? COPY.demoSketch : pol.confident ? COPY.sketchReady : COPY.sketchLearn(pct)) +
+          (data.fallback || data.sample ? COPY.demoSketch : pol.confident ? COPY.sketchReady : COPY.sketchLearn(pct)) +
             " · " +
             n +
             " / " +
@@ -429,7 +446,7 @@
         const opened = Boolean(data.opened);
         const status = document.getElementById("status");
         status.className = "pill " + (opened ? "live" : "wait");
-        status.textContent = opened ? (data.fallback ? COPY.sampleLoop : COPY.live) : COPY.waiting;
+        status.textContent = opened ? (data.fallback || data.sample ? COPY.sampleLoop : COPY.live) : COPY.waiting;
         const noauth = document.getElementById("noauthPill");
         if (noauth) {
           noauth.hidden = Boolean(data.auth_required);
@@ -456,7 +473,7 @@
         if (dot) {
           dot.className = "dot " + (opened ? "live" : "wait");
         }
-        if (signal) signal.textContent = opened ? (data.fallback ? COPY.sampleLoop : COPY.live) : COPY.waiting;
+        if (signal) signal.textContent = opened ? (data.fallback || data.sample ? COPY.sampleLoop : COPY.live) : COPY.waiting;
         const vis = document.getElementById("visionText");
         if (vis) {
           const name = data.vision || "local";
@@ -486,7 +503,10 @@
         line.className = "models" + (models[seatKey] && !models[seatKey].match ? " gap" : "");
         card.classList.toggle("alert", Boolean(hub.page_operator && seat === "hub"));
         const learnBit = pol.confident ? "" : COPY.learnBit(n, need);
-        const whyText = [edge.why || "", data.fallback ? COPY.sampleWhy : ""].filter(Boolean).join(" ");
+        const isSample = Boolean(data.fallback || data.sample);
+        const showcase = Boolean((data.demo || {}).showcase_active);
+        const sampleCopy = showcase ? COPY.sampleWhyShowcase : COPY.sampleWhy;
+        const whyText = [edge.why || "", isSample ? sampleCopy : ""].filter(Boolean).join(" ");
         if (seat === "edge") {
           if (!data.last_motion) {
             setLine(scene, COPY.quiet);
@@ -498,11 +518,18 @@
             setLine(whyEl, whyText);
           } else if (!pol.confident) {
             setLine(scene, COPY.learning);
-            setLine(sub, data.fallback ? COPY.polDemo(n, need) : COPY.polSketch(n, need));
+            setLine(
+              sub,
+              showcase
+                ? COPY.polShowcase(n, need)
+                : isSample
+                  ? COPY.polDemo(n, need)
+                  : COPY.polSketch(n, need)
+            );
             setLine(whyEl, whyText);
-          } else if (data.fallback && edge.upload) {
+          } else if (isSample && edge.upload) {
             setLine(scene, COPY.sentDetect);
-            setLine(sub, COPY.sampleWhy);
+            setLine(sub, sampleCopy);
             setLine(whyEl, "");
           } else {
             setLine(scene, COPY.usual);
@@ -560,7 +587,17 @@
           presets.querySelectorAll("button[data-clip]").forEach((btn) => {
             const path = btn.getAttribute("data-clip");
             btn.disabled = present[path] === false;
+            const meta = data.demo_clips.find((c) => c.path === path);
+            if (meta && meta.page_review) {
+              btn.title = meta.blurb || "Showcase clip (Review paging when demo.page_review is on)";
+              btn.classList.add("showcase");
+            }
           });
+        }
+        const hint = document.getElementById("demoHint");
+        if (hint && data.demo) {
+          hint.hidden = false;
+          hint.textContent = data.demo.page_review ? COPY.demoHintOn : COPY.demoHintOff;
         }
       } catch (err) {
         document.getElementById("status").textContent = COPY.error;
@@ -633,8 +670,14 @@
 
     function headline(event) {
       const boxes = event.boxes || [];
-      if (boxes.length) {
-        return boxes
+      const primary = event.track_id;
+      const focused =
+        primary != null && boxes.length
+          ? boxes.filter((b) => b.track_id == null || Number(b.track_id) === Number(primary))
+          : boxes;
+      const shown = focused.length ? focused : boxes;
+      if (shown.length) {
+        return shown
           .map((b) => (b.track_id != null ? "#" + b.track_id + " " : "") + (b.cls || "object"))
           .join(", ");
       }
@@ -701,8 +744,14 @@
         spotEmpty.textContent = COPY.noMark;
       }
       const boxes = event.boxes || [];
-      const chips = boxes.length
-        ? boxes
+      const primary = event.track_id;
+      const focused =
+        primary != null && boxes.length
+          ? boxes.filter((b) => b.track_id == null || Number(b.track_id) === Number(primary))
+          : boxes;
+      const labelBoxes = focused.length ? focused : boxes;
+      const chips = labelBoxes.length
+        ? labelBoxes
         : (event.classes || []).map((cls) => ({
             cls,
             track_id: event.track_id,

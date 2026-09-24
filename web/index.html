@@ -4,6 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Tundra — Live</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/app.css" />
 </head>
 <body data-page="live" data-seat="edge">
@@ -60,8 +63,13 @@
       <div class="presets" id="demoPresets">
         <button type="button" class="ghost" data-clip="data/samples/street.mp4">Street</button>
         <button type="button" class="ghost" data-clip="data/samples/indoor.mp4">Indoor</button>
+        <button type="button" class="ghost" data-clip="data/samples/parking.mp4">Parking</button>
+        <button type="button" class="ghost" data-clip="data/samples/courtyard.mp4">Courtyard</button>
+        <button type="button" class="ghost" data-clip="data/samples/lobby.mp4">Lobby</button>
         <button type="button" class="ghost" data-clip="data/samples/package.mp4">Left bag</button>
+        <button type="button" class="ghost" data-clip="data/samples/drones.mp4">Drones</button>
       </div>
+      <p class="hint" id="demoHint" hidden></p>
       <p class="msg" id="settingsMsg"></p>
     </details>
   </main>
