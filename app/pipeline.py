@@ -20,6 +20,7 @@ from app.detect_filters import (
     filter_detections,
     focus_detections,
     idle_seed_detections,
+    motion_gate_detections,
 )
 from app.embed import EmbeddingIndex, thumb_hist
 from app.escalate import decide_hub, effective_mode
@@ -682,9 +683,18 @@ class Pipeline:
                     self.status.last_error = f"detect: {exc}"
             h, w = frame.shape[:2]
             detections = filter_detections(detections, (w, h), self._box_filter)
-            if not edge_trip:
+            existing = [tr.xyxy for tr in self.tracker.tracks.values()]
+            if edge_trip:
+                # Drop vehicle/person boxes that miss the motion blob (pavement ghosts).
+                detections = motion_gate_detections(
+                    detections,
+                    (w, h),
+                    grid,
+                    existing,
+                    iou_match=float(self.cfg.tracking.iou_match),
+                )
+            else:
                 # Idle sweep keeps still bags/people; do not seed vehicle pavement FPs.
-                existing = [tr.xyxy for tr in self.tracker.tracks.values()]
                 detections = idle_seed_detections(
                     detections,
                     existing,
