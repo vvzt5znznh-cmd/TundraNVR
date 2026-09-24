@@ -200,9 +200,9 @@
       for (let x = 0; x < cols; x++) {
         const motion = Number((g[y] || [])[x] || 0);
         const freq = Number((u[y] || [])[x] || 0);
-        let bg = "#1c2229";
-        if (freq > 0.08) bg = "rgba(61,186,140,0.38)";
-        if (motion > 0.12) bg = freq < 0.08 ? "rgba(240,113,103,0.78)" : "rgba(61,186,140,0.8)";
+        let bg = "#1a2a35";
+        if (freq > 0.08) bg = "rgba(47,191,155,0.38)";
+        if (motion > 0.12) bg = freq < 0.08 ? "rgba(229,115,106,0.78)" : "rgba(47,191,155,0.8)";
         html += `<i style="background:${bg}" title="usual ${freq.toFixed(2)} · now ${motion.toFixed(2)}"></i>`;
       }
     }
@@ -272,10 +272,10 @@
         const dwell = d.dwell_s != null ? " " + d.dwell_s + "s" : "";
         const zone = d.zone ? " · " + d.zone : "";
         const conf = d.conf != null ? " " + Number(d.conf).toFixed(2) : "";
-        return `<span>${esc(id + (d.cls || "object") + conf + dwell + zone)}</span>`;
+        return `<span class="obj-chip">${esc(id + (d.cls || "object") + conf + dwell + zone)}</span>`;
       })
       .join("");
-    return extra ? html + `<span class="more">+${extra}</span>` : html;
+    return extra ? html + `<span class="obj-chip more">+${extra}</span>` : html;
   }
 
   function renderSituation(el, lines, seat) {
