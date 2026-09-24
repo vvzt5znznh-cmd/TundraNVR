@@ -88,6 +88,21 @@ vision:
     Fixed building camera. Alert on unattended bags and after-hours people
     with no badge in the last minute. Ordinary doorway traffic is normal.
 
+# Optional TypeSafe Jev page/suppress gate (spike). Structured trip state only
+# — never frames. Remote calls need allow_cloud: true plus OPENROUTER_API_KEY
+# (or TYPESAFE_API_KEY). Fail-open when disabled / denied / unreachable.
+# provider: openrouter | mock  (mock = offline deterministic path for smoke)
+jev:
+  enabled: false
+  allow_cloud: false
+  provider: openrouter
+  model: typesafe/jev-1.13
+  base_url: https://openrouter.ai/api/alpha/decisions
+  timeout_seconds: 2.0
+  page_threshold: 0.75
+  suppress_threshold: 0.35
+  dry_run: false
+
 fusion:
   enabled: true
   badge_window_seconds: 60
